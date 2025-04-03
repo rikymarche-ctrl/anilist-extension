@@ -627,6 +627,10 @@ window.updateTooltipContent = function(tooltip, comment, username, mediaId) {
     const currentMediaMatch = currentPath.match(/\/(anime|manga)\/(\d+)/);
     const currentMediaId = currentMediaMatch ? parseInt(currentMediaMatch[2]) : null;
 
+    // Store username/mediaId as data attributes for sync updates
+    tooltip.setAttribute('data-username', username);
+    tooltip.setAttribute('data-media-id', mediaId);
+
     // Display comment
     if (comment && comment.trim() !== "") {
         const commentDiv = document.createElement("div");
@@ -1039,15 +1043,20 @@ function saveCache() {
     }
 
     try {
-        chrome.storage.local.set({
+        // Add a lastUpdated timestamp for synchronization
+        const cacheData = {
             commentCache,
             // Save mediaUserMap
             mediaUserMap: Object.fromEntries(
                 Object.entries(mediaUserMap).map(([mediaId, userSet]) =>
                     [mediaId, Array.from(userSet)]
                 )
-            )
-        }, function() {
+            ),
+            // Add last update time for sync between tabs
+            lastUpdated: Date.now()
+        };
+
+        chrome.storage.local.set(cacheData, function() {
             if (chrome.runtime.lastError) {
                 console.error("Error saving cache:", chrome.runtime.lastError);
             } else if (DEBUG) {
@@ -1460,14 +1469,15 @@ function loadCacheAndInitialize() {
     if (!isExtensionContextValid()) return;
 
     try {
-        chrome.storage.local.get(['commentCache', 'mediaUserMap'], function(result) {
+        // Richiedere TUTTI i campi rilevanti dalla storage
+        chrome.storage.local.get(null, function(result) {
             if (!isExtensionContextValid()) return;
 
-            // Process cache
+            // Caricamento commentCache
             if (result.commentCache) {
                 if (DEBUG) console.log("Comment cache loaded from storage:", Object.keys(result.commentCache).length, "items");
 
-                // Filter expired entries
+                // Elaborazione della cache come prima
                 const now = Date.now();
                 const validEntries = {};
                 let expiredCount = 0;
@@ -1476,7 +1486,7 @@ function loadCacheAndInitialize() {
                     if (typeof value === 'object' && value.timestamp && (now - value.timestamp) < CACHE_MAX_AGE) {
                         validEntries[key] = value;
                     } else if (typeof value === 'string' && value !== "__has_comment__") {
-                        // Migrate legacy format
+                        // Migrazione formato vecchio
                         validEntries[key] = {
                             content: value,
                             timestamp: now
@@ -1496,7 +1506,7 @@ function loadCacheAndInitialize() {
                 }
             }
 
-            // Restore media-user map
+            // Ripristino mediaUserMap
             if (result.mediaUserMap) {
                 try {
                     mediaUserMap = {};
@@ -1516,10 +1526,10 @@ function loadCacheAndInitialize() {
                 rebuildMediaUserMap();
             }
 
-            // Start cleanup timer
+            // Avviare timer pulizia cache
             startCacheCleanupTimer();
 
-            // Initialize
+            // Inizializzare estensione
             initializeExtension();
         });
     } catch (e) {
@@ -1529,6 +1539,122 @@ function loadCacheAndInitialize() {
         initializeExtension();
     }
 }
+
+// Funzione che aggiorna le icone di commento basate sulla cache attuale
+function refreshCommentIcons() {
+    const currentMediaInfo = extractMediaIdFromUrl();
+    const currentMediaId = currentMediaInfo ? currentMediaInfo.id : null;
+
+    if (!currentMediaId || !isInitialized) return;
+
+    if (DEBUG) console.log("Refreshing comment icons based on updated cache");
+
+    // Trova tutte le icone di commento attuali e le rimuove
+    const followingSection = document.querySelector('div[class="following"]') ||
+        document.querySelector('div.following') ||
+        document.querySelector('[class^="following"]') ||
+        document.querySelector('[class*=" following"]');
+
+    if (!followingSection) return;
+
+    // Trova tutti gli user entry
+    const userEntrySelectors = [
+        'a[class="follow"]',
+        'a.follow',
+        'a[class^="follow"]',
+        'a.user',
+        'a[class*="user"]',
+        'a:has(div[class="name"])'
+    ];
+
+    let userEntries = [];
+
+    // Trova user entries
+    for (const selector of userEntrySelectors) {
+        try {
+            const entries = followingSection.querySelectorAll(selector);
+            if (entries.length > 0) {
+                userEntries = [...userEntries, ...Array.from(entries)];
+            }
+        } catch (e) {
+            // Alcuni selettori potrebbero non essere supportati
+        }
+    }
+
+    // Rimuovi eventuali duplicati
+    const uniqueEntries = [];
+    const seenElements = new Set();
+
+    for (const entry of userEntries) {
+        const entryId = entry.textContent?.trim() || entry.innerHTML;
+        if (!seenElements.has(entryId)) {
+            seenElements.add(entryId);
+            uniqueEntries.push(entry);
+        }
+    }
+
+    userEntries = uniqueEntries;
+
+    if (userEntries.length === 0) return;
+
+    // Per ogni entry
+    for (const entry of userEntries) {
+        // Rimuovi icona esistente
+        const existingIcon = entry.querySelector(".comment-icon-column");
+        if (existingIcon) existingIcon.remove();
+
+        // Prendi nome utente
+        const nameElement = entry.querySelector("div[class='name']");
+        if (!nameElement) continue;
+
+        const username = nameElement.textContent.trim();
+        const cacheKey = `${username}-${currentMediaId}`;
+
+        // Controlla cache
+        if (commentCache[cacheKey]) {
+            const hasComment = hasCachedComment(cacheKey);
+            const commentContent = getCachedComment(cacheKey, false);
+
+            // Aggiungi icona se c'è un commento
+            if (hasComment) {
+                addCommentIcon(entry, username, currentMediaId, true, commentContent);
+            }
+        }
+    }
+
+    if (DEBUG) console.log("Comment icons refreshed successfully");
+}
+
+// Migliora il listener per i cambiamenti nello storage
+chrome.storage.onChanged.addListener(function(changes, namespace) {
+    if (namespace === 'local' && changes.commentCache) {
+        // Aggiorna la cache in memoria con i nuovi valori
+        const newCache = changes.commentCache.newValue || {};
+
+        // Aggiorna tutta la cache
+        commentCache = newCache;
+
+        if (DEBUG) console.log("Cache updated from another tab");
+
+        // Aggiorna le icone di commento
+        refreshCommentIcons();
+
+        // Aggiorna anche eventuali tooltip aperti
+        const tooltip = document.getElementById("anilist-tooltip");
+        if (tooltip && tooltip.style.display === 'block') {
+            const username = tooltip.getAttribute('data-username');
+            const mediaId = parseInt(tooltip.getAttribute('data-media-id'));
+
+            if (username && mediaId) {
+                const cacheKey = `${username}-${mediaId}`;
+                if (commentCache[cacheKey]) {
+                    const commentContent = getCachedComment(cacheKey, false);
+                    window.updateTooltipContent(tooltip, commentContent, username, mediaId);
+                }
+            }
+        }
+    }
+});
 
 // Rebuild media-user map from cache
 function rebuildMediaUserMap() {
