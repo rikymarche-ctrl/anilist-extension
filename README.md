@@ -1,51 +1,74 @@
 # Anilist Hover Comments
 
+> Quickly view user comments by hovering over ratings in the Anilist "Following" section.
+
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+
 ![Anilist Hover Comments](screenshots/preview.png)
 
-A browser extension that enhances the Anilist experience by displaying user comments when hovering over ratings in the "Following" section of anime pages.
+## Overview
+
+Anilist Hover Comments enhances your Anilist experience by displaying user comments when hovering over entries in the "Following" section of anime and manga pages. No more clicking through to user profiles just to see what your friends think!
+
+The extension is designed to be lightweight and respectful of Anilist's API, using an intelligent caching system to minimize requests while still providing up-to-date information. You'll barely notice it's there until you need it.
 
 ## Features
 
-- 🔍 Shows user comments on hover without needing to visit user profiles
-- 💨 Fast performance with comment caching
-- 🎯 Only displays comment icons for users who have actually left comments
-- 🌈 Smooth animations and visually appealing interface
-- 🧠 Smart positioning of tooltips to ensure they stay within viewport
+- View user comments directly from anime/manga pages with a simple hover
+- Smart detection displays comment icons only for users who left notes
+- Advanced caching system prevents excessive API requests to Anilist
+- Lightweight impact ensures browsing feels seamless and responsive
+- Smooth animations and responsive tooltip positioning
+
+## Browser Compatibility
+
+Anilist Hover Comments is compatible with most modern browsers: Google Chrome, Microsoft Edge, Brave and others
 
 ## Installation
 
-### Chrome Web Store
-*(Coming soon)*
+Installation steps are similar across browsers:
 
-### Manual Installation
-1. Download or clone this repository
-2. Open Chrome/Edge and navigate to `chrome://extensions/`
-3. Enable "Developer mode" in the top-right corner
-4. Click "Load unpacked" and select the extension directory
-5. The extension will now be installed and active on Anilist
+1. Download the latest release from the [Releases](https://github.com/rikymarche-ctrl/anilist-extension/releases) page
+2. Unzip the file to a location of your choice
+3. Go to your browser's extensions page:
+    - Chrome: `chrome://extensions/`
+    - Edge: `edge://extensions/`
+    - Brave: `brave://extensions/`
+    - Other browsers: Check your browser's menu for the extensions/add-ons section
+4. Enable "Developer mode" (usually a toggle in the top-right corner)
+5. Click "Load unpacked" and select the extension directory (unzipped)
 
 ## Usage
 
-1. Navigate to any anime page on [Anilist](https://anilist.co)
-2. Look for comment icons (💬) next to user ratings in the "Following" section
-3. Hover over an icon to see the user's comment about that anime
-
-## Technical Details
-
-The extension uses:
-- MutationObserver to detect DOM changes
-- Debounced event handlers for performance
-- Local storage for comment caching
-- GraphQL API queries to fetch user comments
-- Custom positioning algorithm for tooltips
+1. Navigate to any anime or manga page on [Anilist](https://anilist.co)
+2. Look for comment icons (💬) next to user entries in the "Following" section
+3. Hover over an icon to see the user's comment
+4. Click the refresh button in the tooltip to fetch the latest comment
 
 ## Privacy
 
 This extension:
-- Only accesses data on anilist.co domains
-- Does not collect any user data
-- Only stores comments locally for caching purposes
+- Only operates on anilist.co domains
+- Stores comments locally in your browser for caching purposes
 - Makes API requests only to the official Anilist GraphQL endpoint
+- Does not collect or transmit any personal data
+
+## Development
+
+### Prerequisites
+- Basic knowledge of JavaScript, HTML, and CSS
+- Web browser with developer tools
+
+### Local Setup
+```bash
+# Clone the repository
+git clone https://github.com/rikymarche-ctrl/anilist-extension.git
+
+# Navigate to project directory
+cd anilist-extension
+
+# Load the extension in your browser following the installation steps
+```
 
 ## Contributing
 
@@ -59,13 +82,8 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- Thanks to Anilist for providing a great API
-- Icon design by [attribution if applicable]
+This project is licensed under the MIT License - see the [LICENSE](LICENSE.txt) file for details.
 
 ---
 
-Created with ❤️ for the Anilist community
+Made with ❤️ for the Anilist community

@@ -294,3 +294,36 @@ div.following a {
   font-size: 14px;
   animation: fadeIn 0.3s ease-in-out;
 }
+
+/* Warning message styling for inaccessible comments */
+#anilist-tooltip .tooltip-warning {
+  color: #ffcc00;
+  background-color: rgba(255, 204, 0, 0.1);
+  border-left: 3px solid #ffcc00;
+  padding: 8px 10px;
+  margin: 10px 0 5px 0;
+  border-radius: 4px;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.4;
+  display: flex;
+  align-items: flex-start;
+}
+
+#anilist-tooltip .tooltip-warning i {
+  margin-right: 6px;
+  margin-top: 2px;
+}
+
+/* Warning state for refresh button */
+#anilist-tooltip .tooltip-refresh-btn.warning {
+  background: rgba(255, 204, 0, 0.3);
+  animation: warningPulse 1.5s 1 ease-in-out;
+}
+
+/* Warning animation for feedback */
+@keyframes warningPulse {
+  0% { background-color: rgba(255, 204, 0, 0.2); }
+  50% { background-color: rgba(255, 204, 0, 0.4); }
+  100% { background-color: rgba(255, 204, 0, 0.2); }
+}
