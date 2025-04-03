@@ -1,0 +1,296 @@
+/**
+ * Anilist Hover Comments - Enhanced CSS Styles
+ * 
+ * This stylesheet provides improved styling for the comment tooltip system
+ * with enhanced visual feedback for refresh states and cache status.
+ * 
+ * Created by ExAstra
+ * GitHub: https://github.com/rikymarche-ctrl/anilist-extension
+ */
+
+/*------------------------------------------------------
+ * ANIMATIONS
+ *------------------------------------------------------*/
+
+/* Fade in animation for tooltips and notifications */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Pulsing animation for highlights and loading states */
+@keyframes pulse {
+  0% { opacity: 0.6; }
+  50% { opacity: 1; }
+  100% { opacity: 0.6; }
+}
+
+/* Spinning animation for loading indicators */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Success animation for feedback */
+@keyframes successPulse {
+  0% { background-color: rgba(40, 167, 69, 0.2); }
+  50% { background-color: rgba(40, 167, 69, 0.4); }
+  100% { background-color: rgba(40, 167, 69, 0.2); }
+}
+
+/* Error animation for feedback */
+@keyframes errorPulse {
+  0% { background-color: rgba(220, 53, 69, 0.2); }
+  50% { background-color: rgba(220, 53, 69, 0.4); }
+  100% { background-color: rgba(220, 53, 69, 0.2); }
+}
+
+/* Apply spin animation to Font Awesome spinner icons */
+.fa-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Animate pulsing effect for notifications */
+.animate-pulse {
+  animation: pulse 2s infinite ease-in-out;
+}
+
+/*------------------------------------------------------
+ * TOOLTIP CONTAINER
+ *------------------------------------------------------*/
+
+/* Main tooltip container */
+#anilist-tooltip {
+  /* Positioning */
+  position: absolute;
+  z-index: 100000; /* Ensure tooltip stays above other elements */
+  
+  /* Sizing */
+  min-width: 200px; /* Ensures minimum width for better spacing */
+  max-width: 320px; /* Slightly increased for better readability */
+  
+  /* Appearance */
+  background: rgba(38, 44, 55, 0.97); /* Increased opacity for better readability */
+  color: white;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(61, 180, 242, 0.1);
+  backdrop-filter: blur(5px);
+  border-radius: 6px; /* Slightly increased for modern look */
+  border-left: 3px solid #3db4f2;
+  
+  /* Spacing */
+  padding: 14px; /* Increased padding for better content spacing */
+  
+  /* Text */
+  font-size: 14px;
+  line-height: 1.5; /* Improved line height for readability */
+  
+  /* Animation & Transition */
+  animation: fadeIn 0.2s ease-in-out;
+  transition: all 0.3s ease;
+  
+  /* Initial state */
+  display: none;
+  
+  /* Enable interaction */
+  pointer-events: auto;
+}
+
+/* Hover state for the tooltip */
+#anilist-tooltip:hover {
+  background: linear-gradient(145deg, rgba(38, 45, 58, 0.98), rgba(28, 33, 42, 0.98));
+  border-left: 3px solid #5bc2ff;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(61, 180, 242, 0.1);
+  transform: translateY(-1px);
+}
+
+/*------------------------------------------------------
+ * TOOLTIP CONTENT
+ *------------------------------------------------------*/
+
+/* Content container inside tooltip */
+#anilist-tooltip .tooltip-content {
+  min-height: 20px; /* Ensures a minimum height for content */
+  margin-bottom: 12px; /* Increased space between content and footer */
+}
+
+/* Comment text styling */
+#anilist-tooltip .comment {
+  word-wrap: break-word;
+  line-height: 1.5;
+  white-space: pre-line; /* Preserves line breaks in comments */
+  margin-bottom: 5px;
+}
+
+/* Styling for "No comment" placeholder */
+#anilist-tooltip .no-comment {
+  font-style: italic;
+  color: #aaa;
+  margin-bottom: 5px;
+}
+
+/* Loading indicator in tooltip */
+#anilist-tooltip .tooltip-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  color: #bbb;
+  font-style: italic;
+}
+
+/* Error message styling */
+#anilist-tooltip .tooltip-error {
+  color: #ff6b6b;
+  padding: 8px;
+  margin: 5px 0;
+  background-color: rgba(255, 107, 107, 0.1);
+  border-radius: 4px;
+  text-align: center;
+  font-size: 13px;
+}
+
+/*------------------------------------------------------
+ * TOOLTIP FOOTER
+ *------------------------------------------------------*/
+
+/* Footer section containing cache info and refresh button */
+#anilist-tooltip .tooltip-footer {
+  margin-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  min-height: 25px; /* Minimum height for footer */
+}
+
+/* Cache timestamp info in footer */
+#anilist-tooltip .tooltip-info {
+  font-size: 11px;
+  opacity: 0.7;
+  font-style: italic;
+  margin-right: 12px; /* Explicit spacing between info and button */
+  max-width: 60%; /* Limits width to avoid overlapping with button */
+  transition: color 0.3s ease;
+}
+
+/* Refresh button */
+#anilist-tooltip .tooltip-refresh-btn {
+  background: rgba(61, 180, 242, 0.2);
+  border: none;
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 11px;
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 75px; /* Ensures consistent button width between states */
+  text-align: center;
+  margin-left: auto; /* Pushes button to the right */
+  position: relative;
+  overflow: hidden;
+}
+
+/* Hover state for refresh button */
+#anilist-tooltip .tooltip-refresh-btn:hover {
+  background: rgba(61, 180, 242, 0.4);
+}
+
+/* Active (pressed) state for refresh button */
+#anilist-tooltip .tooltip-refresh-btn:active {
+  transform: scale(0.95);
+}
+
+/* Disabled state for refresh button */
+#anilist-tooltip .tooltip-refresh-btn:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+/* Refreshing state for button */
+#anilist-tooltip .tooltip-refresh-btn.refreshing {
+  background: rgba(61, 180, 242, 0.3);
+  animation: pulse 1.5s infinite ease-in-out;
+}
+
+/* Success state for button */
+#anilist-tooltip .tooltip-refresh-btn.success {
+  background: rgba(40, 167, 69, 0.3);
+  animation: successPulse 1.5s 1 ease-in-out;
+}
+
+/* Error state for button */
+#anilist-tooltip .tooltip-refresh-btn.error {
+  background: rgba(220, 53, 69, 0.3);
+  animation: errorPulse 1.5s 1 ease-in-out;
+}
+
+/* Spinner icon in refresh button */
+#anilist-tooltip .tooltip-refresh-btn .fa-spinner {
+  display: inline-block;
+  margin-right: 4px;
+}
+
+/*------------------------------------------------------
+ * COMMENT ICON
+ *------------------------------------------------------*/
+
+/* Comment icon styling */
+.anilist-comment-icon {
+  color: #8f98a6; /* Default gray color */
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0.8;
+  transition: all 0.2s ease;
+  vertical-align: middle;
+  visibility: visible !important;
+  display: inline-block !important;
+}
+
+/* Hover effect for comment icon */
+.anilist-comment-icon:hover {
+  color: #3db4f2; /* Blue highlight color */
+  opacity: 1;
+  transform: scale(1.2);
+  filter: drop-shadow(0 0 2px rgba(61, 180, 242, 0.5));
+}
+
+/* Container for comment icon */
+.comment-icon-column {
+  z-index: 5;
+  cursor: pointer;
+  pointer-events: auto; /* Ensures clicks on the icon don't propagate to the link */
+  min-width: 16px;
+  min-height: 16px;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex !important;
+  align-items: center !important;
+}
+
+/*------------------------------------------------------
+ * FOLLOWING SECTION
+ *------------------------------------------------------*/
+
+/* Position setup for user entries */
+div[class='following'] a,
+div.following a {
+  position: relative !important;
+}
+
+/*------------------------------------------------------
+ * NOTIFICATIONS AND WARNINGS
+ *------------------------------------------------------*/
+
+/* Rate limit warning message */
+.rate-limit-warning {
+  background-color: rgba(255, 50, 50, 0.1);
+  border: 1px solid rgba(255, 50, 50, 0.3);
+  border-radius: 4px;
+  padding: 10px;
+  margin-bottom: 15px;
+  font-size: 14px;
+  animation: fadeIn 0.3s ease-in-out;
+}
