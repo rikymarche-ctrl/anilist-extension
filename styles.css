@@ -45,6 +45,13 @@
   100% { background-color: rgba(220, 53, 69, 0.2); }
 }
 
+/* Warning animation for feedback */
+@keyframes warningPulse {
+  0% { background-color: rgba(255, 204, 0, 0.2); }
+  50% { background-color: rgba(255, 204, 0, 0.4); }
+  100% { background-color: rgba(255, 204, 0, 0.2); }
+}
+
 /* Apply spin animation to Font Awesome spinner icons */
 .fa-spin {
   animation: spin 1s linear infinite;
@@ -63,44 +70,61 @@
 #anilist-tooltip {
   /* Positioning */
   position: absolute;
-  z-index: 100000; /* Ensure tooltip stays above other elements */
-  
+  z-index: 100000;
+
   /* Sizing */
-  min-width: 200px; /* Ensures minimum width for better spacing */
-  max-width: 320px; /* Slightly increased for better readability */
-  
+  width: 280px;
+  min-width: 250px;
+  max-width: 320px;
+
   /* Appearance */
-  background: rgba(38, 44, 55, 0.97); /* Increased opacity for better readability */
+  background: rgba(38, 44, 55, 0.97);
   color: white;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(61, 180, 242, 0.1);
   backdrop-filter: blur(5px);
-  border-radius: 6px; /* Slightly increased for modern look */
+  border-radius: 6px;
   border-left: 3px solid #3db4f2;
-  
+
   /* Spacing */
-  padding: 14px; /* Increased padding for better content spacing */
-  
+  padding: 14px;
+
   /* Text */
   font-size: 14px;
-  line-height: 1.5; /* Improved line height for readability */
-  
+  line-height: 1.5;
+
   /* Animation & Transition */
   animation: fadeIn 0.2s ease-in-out;
-  transition: all 0.3s ease;
-  
+  transition: opacity 0.3s ease, transform 0.3s ease, left 0.2s ease, top 0.2s ease;
+
   /* Initial state */
   display: none;
-  
+
   /* Enable interaction */
   pointer-events: auto;
+
+  /* Fixed position styles */
+  transform-origin: center left;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
 }
 
 /* Hover state for the tooltip */
 #anilist-tooltip:hover {
   background: linear-gradient(145deg, rgba(38, 45, 58, 0.98), rgba(28, 33, 42, 0.98));
   border-left: 3px solid #5bc2ff;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(61, 180, 242, 0.1);
-  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(61, 180, 242, 0.2);
+}
+
+/* Left side arrow connecting tooltip to Following section */
+#anilist-tooltip::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 20px;
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+  border-right: 6px solid rgba(38, 44, 55, 0.97);
+  display: block;
 }
 
 /*------------------------------------------------------
@@ -109,15 +133,17 @@
 
 /* Content container inside tooltip */
 #anilist-tooltip .tooltip-content {
-  min-height: 20px; /* Ensures a minimum height for content */
-  margin-bottom: 12px; /* Increased space between content and footer */
+  min-height: 20px;
+  margin: 0;
+  word-wrap: break-word;
 }
 
 /* Comment text styling */
 #anilist-tooltip .comment {
   word-wrap: break-word;
   line-height: 1.5;
-  white-space: pre-line; /* Preserves line breaks in comments */
+  white-space: pre-line;
+  margin-top: 0;
   margin-bottom: 5px;
 }
 
@@ -162,7 +188,7 @@
   justify-content: space-between;
   align-items: center;
   font-size: 12px;
-  min-height: 25px; /* Minimum height for footer */
+  min-height: 25px;
 }
 
 /* Cache timestamp info in footer */
@@ -170,8 +196,8 @@
   font-size: 11px;
   opacity: 0.7;
   font-style: italic;
-  margin-right: 12px; /* Explicit spacing between info and button */
-  max-width: 60%; /* Limits width to avoid overlapping with button */
+  margin-right: 12px;
+  max-width: 60%;
   transition: color 0.3s ease;
 }
 
@@ -185,9 +211,9 @@
   color: white;
   cursor: pointer;
   transition: all 0.2s ease;
-  min-width: 75px; /* Ensures consistent button width between states */
+  min-width: 75px;
   text-align: center;
-  margin-left: auto; /* Pushes button to the right */
+  margin-left: auto;
   position: relative;
   overflow: hidden;
 }
@@ -226,6 +252,12 @@
   animation: errorPulse 1.5s 1 ease-in-out;
 }
 
+/* Warning state for refresh button */
+#anilist-tooltip .tooltip-refresh-btn.warning {
+  background: rgba(255, 204, 0, 0.3);
+  animation: warningPulse 1.5s 1 ease-in-out;
+}
+
 /* Spinner icon in refresh button */
 #anilist-tooltip .tooltip-refresh-btn .fa-spinner {
   display: inline-block;
@@ -238,29 +270,37 @@
 
 /* Comment icon styling */
 .anilist-comment-icon {
-  color: #8f98a6; /* Default gray color */
+  color: #8f98a6;
   font-size: 14px;
   cursor: pointer;
   opacity: 0.8;
-  transition: all 0.2s ease;
+  transition: color 0.2s ease, transform 0.2s ease;
   vertical-align: middle;
   visibility: visible !important;
   display: inline-block !important;
+  position: relative;
 }
 
 /* Hover effect for comment icon */
 .anilist-comment-icon:hover {
-  color: #3db4f2; /* Blue highlight color */
+  color: #3db4f2;
   opacity: 1;
   transform: scale(1.2);
   filter: drop-shadow(0 0 2px rgba(61, 180, 242, 0.5));
+}
+
+/* Highlighted state for active comment icon */
+.anilist-comment-icon.active-comment {
+  color: #3db4f2;
+  transform: scale(1.2);
+  filter: drop-shadow(0 0 3px rgba(61, 180, 242, 0.5));
 }
 
 /* Container for comment icon */
 .comment-icon-column {
   z-index: 5;
   cursor: pointer;
-  pointer-events: auto; /* Ensures clicks on the icon don't propagate to the link */
+  pointer-events: auto;
   min-width: 16px;
   min-height: 16px;
   position: absolute;
@@ -281,7 +321,7 @@ div.following a {
 }
 
 /*------------------------------------------------------
- * NOTIFICATIONS AND WARNINGS
+ * WARNINGS AND NOTIFICATIONS
  *------------------------------------------------------*/
 
 /* Rate limit warning message */
@@ -315,15 +355,20 @@ div.following a {
   margin-top: 2px;
 }
 
-/* Warning state for refresh button */
-#anilist-tooltip .tooltip-refresh-btn.warning {
-  background: rgba(255, 204, 0, 0.3);
-  animation: warningPulse 1.5s 1 ease-in-out;
+/*------------------------------------------------------
+ * RESPONSIVE ADJUSTMENTS
+ *------------------------------------------------------*/
+
+/* Ensure tooltip stays in view on small screens */
+@media (max-width: 1200px) {
+  #anilist-tooltip {
+    width: 250px;
+  }
 }
 
-/* Warning animation for feedback */
-@keyframes warningPulse {
-  0% { background-color: rgba(255, 204, 0, 0.2); }
-  50% { background-color: rgba(255, 204, 0, 0.4); }
-  100% { background-color: rgba(255, 204, 0, 0.2); }
+@media (max-width: 900px) {
+  #anilist-tooltip {
+    width: 220px;
+    font-size: 13px;
+  }
 }

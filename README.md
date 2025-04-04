@@ -1,29 +1,28 @@
-# Anilist Hover Comments
+# Anilist Hover Comments (Unofficial)
 
 > Quickly view user comments by hovering over ratings in the Anilist "Following" section.
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 
-![Anilist Hover Comments](screenshots/preview.png)
+![Anilist Hover Comments](https://i.imgur.com/d0qCT76.png)
 
 ## Overview
 
-Anilist Hover Comments enhances your Anilist experience by displaying user comments when hovering over entries in the "Following" section of anime and manga pages. No more clicking through to user profiles just to see what your friends think!
+Anilist Hover Comments enhances your Anilist experience by displaying user comments when hovering over entries in the "Following" section of anime and manga pages. No need to click through user profiles—see what your friends think instantly!
 
-The extension is designed to be lightweight and respectful of Anilist's API, using an intelligent caching system to minimize requests while still providing up-to-date information. You'll barely notice it's there until you need it.
+The extension is designed to be lightweight and respectful of Anilist's API, using an intelligent caching system to minimize requests while still providing up-to-date information. It stays out of your way until you need it.
 
 ## Features
 
 - View user comments directly from anime/manga pages with a simple hover
-- Smart detection displays comment icons only for users who left notes
+- Smart detection: Comment icons appear only for users who left notes
 - Advanced caching system prevents excessive API requests to Anilist
 - Lightweight impact ensures browsing feels seamless and responsive
 - Smooth animations and responsive tooltip positioning
 
 ## Browser Compatibility
 
-Anilist Hover Comments is compatible with most modern browsers: Google Chrome, Microsoft Edge, Brave and others
-
+Compatible with modern Chromium-based browsers, including Chrome, Edge, and Brave.
 ## Installation
 
 Installation steps are similar across browsers:
@@ -48,7 +47,7 @@ Installation steps are similar across browsers:
 ## Privacy
 
 This extension:
-- Only operates on anilist.co domains
+- Works exclusively on anilist.co
 - Stores comments locally in your browser for caching purposes
 - Makes API requests only to the official Anilist GraphQL endpoint
 - Does not collect or transmit any personal data

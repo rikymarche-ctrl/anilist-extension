@@ -159,32 +159,6 @@ function handleUrlChange() {
     }
 }
 
-// Complete extension state reset
-function resetExtensionState() {
-    // Reset all flags
-    isInitialized = false;
-    isRateLimited = false;
-    rateLimitResetTime = null;
-    pendingRequests = [];
-    processingRequests = false;
-
-    // Stop detection systems
-    stopDetection();
-
-    // Clear any existing tooltips
-    try {
-        const tooltip = document.getElementById("anilist-tooltip");
-        if (tooltip) tooltip.remove();
-
-        const tooltipManager = TooltipManager.getInstance();
-        tooltipManager.forceHide();
-    } catch (e) {
-        console.error("Error clearing tooltips:", e);
-    }
-
-    if (DEBUG) console.log("Extension state completely reset");
-}
-
 // Setup enhanced URL observer
 function setupUrlObserver() {
     // Disconnect existing observer
@@ -618,6 +592,8 @@ function addRateLimitWarning(followingSection) {
 window.updateTooltipContent = function(tooltip, comment, username, mediaId) {
     tooltip.textContent = "";
 
+    // Header removed as requested
+
     // Create container
     const contentContainer = document.createElement("div");
     contentContainer.className = "tooltip-content";
@@ -631,6 +607,7 @@ window.updateTooltipContent = function(tooltip, comment, username, mediaId) {
     tooltip.setAttribute('data-username', username);
     tooltip.setAttribute('data-media-id', mediaId);
 
+    // No username display - display comment directly
     // Display comment
     if (comment && comment.trim() !== "") {
         const commentDiv = document.createElement("div");
@@ -1454,6 +1431,35 @@ function initializeExtension() {
     }, 500));
 }
 
+function resetExtensionState() {
+    // Reset all flags
+    isInitialized = false;
+    isRateLimited = false;
+    rateLimitResetTime = null;
+    pendingRequests = [];
+    processingRequests = false;
+
+    // Stop detection systems
+    stopDetection();
+
+    // Clear any existing tooltips
+    try {
+        const tooltip = document.getElementById("anilist-tooltip");
+        if (tooltip) tooltip.remove();
+
+        const tooltipManager = TooltipManager.getInstance();
+        tooltipManager.forceHide();
+
+        // Also clear any notifications
+        const notification = document.getElementById("anilist-hover-notification");
+        if (notification) notification.style.display = "none";
+    } catch (e) {
+        console.error("Error clearing UI elements:", e);
+    }
+
+    if (DEBUG) console.log("Extension state completely reset");
+}
+
 // Reset initialization
 function resetInitialization() {
     isInitialized = false;
@@ -1724,10 +1730,9 @@ const TooltipManager = (function() {
         return tooltip;
     }
 
-    // Position tooltip near element
+    // Position tooltip in right column with fixed vertical position
     function positionTooltip(element) {
         const tooltip = getTooltip();
-        const elementRect = element.getBoundingClientRect();
         const viewportWidth = window.innerWidth;
         const viewportHeight = window.innerHeight;
 
@@ -1742,40 +1747,77 @@ const TooltipManager = (function() {
         const tooltipWidth = tooltip.offsetWidth;
         const tooltipHeight = tooltip.offsetHeight;
 
-        // Find score element
-        const userEntry = element.closest("a[class='follow']") || element.closest("a.follow");
-        const scoreElement = userEntry ? userEntry.querySelector("span") : null;
+        // Find the Following section - our main reference point
+        const followingSection = document.querySelector('div[class="following"], div.following');
 
-        // Calculate X position (right side)
-        let posX = elementRect.right + 10 + window.scrollX;
+        if (!followingSection) {
+            // Fallback if Following section not found
+            const defaultX = viewportWidth - 320 - 20;
+            const defaultY = window.scrollY + 100;
 
-        // Calculate Y position
-        let posY;
-        if (scoreElement) {
-            const scoreRect = scoreElement.getBoundingClientRect();
-            posY = scoreRect.bottom + 5 + window.scrollY;
-        } else {
-            posY = elementRect.top + (elementRect.height / 2) + window.scrollY;
+            tooltip.style.left = defaultX + 'px';
+            tooltip.style.top = defaultY + 'px';
+
+            if (wasHidden) {
+                setTimeout(() => { tooltip.style.opacity = '1'; }, 50);
+            }
+            return;
         }
 
-        // Adjust if too close to right edge
-        if (posX + tooltipWidth > viewportWidth - 20) {
-            posX = elementRect.left - tooltipWidth - 10 + window.scrollX;
+        // Get Following section dimensions and position
+        const followingRect = followingSection.getBoundingClientRect();
+
+        // HORIZONTAL POSITIONING:
+        // Position in the right column, with margins on both sides
+        // Calculate available space and center tooltip with margins
+        const rightMargin = 20; // Equal margin on the right side
+        const availableWidth = viewportWidth - (followingRect.right + 20) - rightMargin;
+
+        // If space is tight, prioritize the left margin (near Following section)
+        const posX = availableWidth >= tooltipWidth
+            ? followingRect.right + 20 + window.scrollX
+            : viewportWidth - tooltipWidth - rightMargin + window.scrollX;
+
+        // VERTICAL POSITIONING:
+        // Align exactly with the top of the Following section for perfect alignment
+        let posY = followingRect.top + window.scrollY;
+
+        // No additional offset - exact alignment with Following section
+
+        // Check if we need to adjust due to viewport constraints
+        if (posY + tooltipHeight > window.scrollY + viewportHeight - 20) {
+            // If tooltip would extend beyond bottom of viewport, adjust upward
+            posY = window.scrollY + viewportHeight - tooltipHeight - 20;
         }
 
-        // Adjust if too close to bottom edge
-        if (posY + tooltipHeight > viewportHeight + window.scrollY - 20) {
-            posY = Math.max(window.scrollY + 10,
-                (elementRect.bottom - tooltipHeight) + window.scrollY);
+        // Check if tooltip would be cut off at the top
+        if (posY < window.scrollY + 10) {
+            posY = window.scrollY + 10;
         }
 
-        // Set position
+        // Get the hovered element (comment icon) for highlighting
+        const hoveredElement = element.querySelector('.anilist-comment-icon') || element;
+        const hoveredRect = hoveredElement.getBoundingClientRect();
+
+        // Store the element we're currently displaying comment for
+        tooltip.setAttribute('data-current-element',
+            hoveredElement.closest('a')?.querySelector('.name')?.textContent || '');
+
+        // Add highlight effect to the active comment
+        const allIcons = document.querySelectorAll('.anilist-comment-icon');
+        allIcons.forEach(icon => icon.classList.remove('active-comment'));
+        hoveredElement.classList.add('active-comment');
+
+        // Set position with smooth transition
+        tooltip.style.transition = "left 0.2s ease, top 0.2s ease";
         tooltip.style.left = posX + 'px';
         tooltip.style.top = posY + 'px';
 
         // Restore visibility
         if (wasHidden) {
-            tooltip.style.opacity = '1';
+            setTimeout(() => {
+                tooltip.style.opacity = '1';
+            }, 50);
         }
     }
 
@@ -2283,6 +2325,41 @@ function detectCurrentUsername() {
         }
     }, 2000);
 }
+
+// Detect when an anime/manga is saved in order to apply a comment if it exists
+// Create a MutationObserver to detect changes in the DOM
+const observer = new MutationObserver(mutations => {
+    mutations.forEach(mutation => {
+        // We only care about added nodes (childList) or attribute changes (attributes)
+        if (mutation.type === 'childList' || mutation.type === 'attributes') {
+            // Try to find the "Save" button in the DOM
+            const saveButton = document.querySelector('.save-btn');
+
+            // Check if the button exists and ensure the event listener hasn't been added already
+            if (saveButton && !saveButton.dataset.listenerAdded) {
+                saveButton.dataset.listenerAdded = "true"; // Mark the button to prevent duplicate listeners
+
+                // Add a click event listener to detect when the "Save" button is pressed
+                saveButton.addEventListener('click', function(event) {
+                    console.log('Anime save state confirmed:', this.textContent.trim());
+                });
+            }
+        }
+    });
+});
+
+// Select the target node where changes occur (body includes all elements)
+const targetNode = document.body;
+
+// Define observer configuration:
+// - childList: Detects when elements are added or removed
+// - subtree: Monitors all child elements (not just direct children)
+// - attributes: Detects changes in attributes (useful for dynamic updates)
+const config = { childList: true, subtree: true, attributes: true };
+
+// Start observing the document
+observer.observe(targetNode, config);
+
 
 // INITIALIZATION
 // Load font awesome
