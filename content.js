@@ -5,7 +5,8 @@ console.log("Content script successfully loaded!");
 const DEBUG = false;
 const FORCE_DEBUG = false; // Set to false in production
 
-const MAX_WAIT_TIME = 30000; // 30 seconds maximum wait time for Following section
+// Increased for better reliability on first page load
+const MAX_WAIT_TIME = 60000; // 60 seconds maximum wait time for Following section
 
 // Cache constants
 const CACHE_MAX_AGE = 12 * 60 * 60 * 1000; // 12 hours
@@ -21,7 +22,7 @@ const BATCH_COOLDOWN = 3000; // Wait between batches (ms)
 const MIN_BATCH_SPREAD = 300; // Minimum ms between requests in a batch
 
 // Retry configuration
-const MAX_RETRIES = 1; // 2 attempts total: initial + 1 retry
+const MAX_RETRIES = 3; // Increased retries
 const RETRY_DELAY_BASE = 2000;
 const RETRY_DELAY_FACTOR = 2; // Exponential backoff
 
@@ -45,6 +46,9 @@ let isRateLimited = false;
 let rateLimitResetTime = null;
 let lastUrl = location.href;
 let lastMediaId = null;
+let detectRetryCount = 0;
+let periodicCheckTimer = null;
+let failedInitializationAttempts = 0;
 
 // Helper function to check if extension context is still valid
 function isExtensionContextValid() {
@@ -196,27 +200,40 @@ function stopDetection() {
         globalObserver.disconnect();
         globalObserver = null;
     }
+
+    if (periodicCheckTimer) {
+        clearInterval(periodicCheckTimer);
+        periodicCheckTimer = null;
+    }
 }
 
 // Persistent detection system for the Following section
 function startPersistentDetection(mediaId) {
     console.log("Starting persistent detection system...");
+    detectRetryCount = 0;
+    failedInitializationAttempts = 0;
 
     // 1. Try immediately
     checkForFollowingSection(mediaId);
 
-    // 2. Create a global observer
+    // 2. Create a global observer with improved configuration
     globalObserver = new MutationObserver((mutations) => {
         if (!isInitialized) {
+            let shouldCheck = false;
+
             for (const mutation of mutations) {
                 // Check added nodes
                 if (mutation.addedNodes.length) {
                     for (const node of mutation.addedNodes) {
                         if (node.nodeType === Node.ELEMENT_NODE) {
+                            // Added more selectors to catch all variations
                             if (node.querySelector &&
                                 (node.classList?.contains('following') ||
-                                    node.querySelector?.('div[class="following"]'))) {
-                                checkForFollowingSection(mediaId);
+                                    node.querySelector?.('div[class="following"]') ||
+                                    node.querySelector?.('div.following') ||
+                                    node.querySelector?.('[class^="following"]') ||
+                                    node.querySelector?.('[class*=" following"]'))) {
+                                shouldCheck = true;
                                 break;
                             }
                         }
@@ -226,33 +243,136 @@ function startPersistentDetection(mediaId) {
                 // Check modified targets
                 if (mutation.target.nodeType === Node.ELEMENT_NODE &&
                     mutation.target.querySelector &&
-                    mutation.target.querySelector('div[class="following"]')) {
-                    checkForFollowingSection(mediaId);
+                    (mutation.target.querySelector('div[class="following"]') ||
+                        mutation.target.querySelector('div.following') ||
+                        mutation.target.querySelector('[class^="following"]') ||
+                        mutation.target.querySelector('[class*=" following"]'))) {
+                    shouldCheck = true;
                 }
+
+                if (shouldCheck) break;
             }
-        } else {
-            globalObserver.disconnect();
+
+            if (shouldCheck) {
+                setTimeout(() => checkForFollowingSection(mediaId), 100);
+            }
         }
     });
 
-    // Observe DOM changes
+    // Observe DOM changes with enhanced configuration
     globalObserver.observe(document.body, {
         childList: true,
         subtree: true,
         attributes: true,
+        attributeFilter: ['class', 'style', 'display'],
         characterData: false
     });
 
-    // 3. Start progressive polling
+    // 3. Start progressive polling with retry mechanism
     startProgressivePolling(mediaId);
 
     // 4. Set final timeout
     setTimeout(() => {
-        if (!isInitialized && document.querySelector('div[class="following"]')) {
+        if (!isInitialized) {
             if (DEBUG) console.log("Final check for Following section after timeout");
             checkForFollowingSection(mediaId, true); // Force check
+
+            // If still not initialized, add failsafe mechanism
+            if (!isInitialized) {
+                scheduleRetryInitialization(mediaId);
+            }
         }
     }, MAX_WAIT_TIME);
+
+    // 5. Set up periodic check even after initialization
+    setupPeriodicCheck(mediaId);
+}
+
+// Schedule retry for initialization
+function scheduleRetryInitialization(mediaId) {
+    if (failedInitializationAttempts >= 3) return;
+
+    failedInitializationAttempts++;
+    console.log(`Scheduling retry initialization attempt ${failedInitializationAttempts}`);
+
+    setTimeout(() => {
+        if (!isInitialized) {
+            console.log("Retrying initialization...");
+            isInitialized = false; // Ensure flag is reset
+            detectRetryCount = 0;
+            startPersistentDetection(mediaId);
+        }
+    }, 5000 * failedInitializationAttempts); // Increasing delay
+}
+
+// Set up periodic check
+function setupPeriodicCheck(mediaId) {
+    if (periodicCheckTimer) {
+        clearInterval(periodicCheckTimer);
+    }
+
+    periodicCheckTimer = setInterval(() => {
+        if (isExtensionContextValid()) {
+            // Verify all user entries have comment icons
+            verifyCommentIcons(mediaId);
+        } else {
+            clearInterval(periodicCheckTimer);
+        }
+    }, 5000); // Check every 5 seconds
+}
+
+// Verify all user entries have comment icons
+function verifyCommentIcons(mediaId) {
+    const followingSection = document.querySelector('div[class="following"], div.following, [class^="following"], [class*=" following"]');
+    if (!followingSection) return;
+
+    // Find all user entries that should have comment icons
+    const userEntrySelectors = [
+        'a[class="follow"]',
+        'a.follow',
+        'a[class^="follow"]',
+        'a.user',
+        'a[class*="user"]',
+        'a:has(div[class="name"])'
+    ];
+
+    let userEntries = [];
+    for (const selector of userEntrySelectors) {
+        try {
+            const entries = followingSection.querySelectorAll(selector);
+            if (entries.length > 0) {
+                userEntries = [...userEntries, ...Array.from(entries)];
+            }
+        } catch (e) {
+            // Some selectors might not be supported
+        }
+    }
+
+    if (userEntries.length === 0) return;
+
+    // Check if any entries are missing icons
+    let missingIcons = false;
+    for (const entry of userEntries) {
+        const nameElement = entry.querySelector("div[class='name']");
+        if (!nameElement) continue;
+
+        const username = nameElement.textContent.trim();
+        const cacheKey = `${username}-${mediaId}`;
+
+        // If we have this user in cache and they have a comment
+        if (commentCache[cacheKey] && hasCachedComment(cacheKey)) {
+            // But icon is missing
+            if (!entry.querySelector(".comment-icon-column")) {
+                missingIcons = true;
+                const commentContent = getCachedComment(cacheKey, false);
+                addCommentIcon(entry, username, mediaId, true, commentContent);
+            }
+        }
+    }
+
+    if (missingIcons && DEBUG) {
+        console.log("Fixed missing comment icons during periodic check");
+    }
 }
 
 // Progressive polling
@@ -260,7 +380,8 @@ function startProgressivePolling(mediaId) {
     if (isPollingActive) return;
     isPollingActive = true;
 
-    const intervals = [1000, 2000, 3000, 5000, 8000, 10000, 15000];
+    // Modified intervals - more frequent initial checks, less frequent later
+    const intervals = [500, 1000, 1500, 2000, 3000, 5000, 8000, 10000, 15000, 20000];
     let currentInterval = 0;
 
     function poll() {
@@ -270,7 +391,14 @@ function startProgressivePolling(mediaId) {
         }
 
         if (currentInterval >= intervals.length) {
-            isPollingActive = false;
+            // Continue polling at the longest interval
+            setTimeout(() => {
+                if (!isInitialized) {
+                    // Try again with force check
+                    checkForFollowingSection(mediaId, true);
+                    poll(); // Continue polling
+                }
+            }, intervals[intervals.length - 1]);
             return;
         }
 
@@ -293,38 +421,52 @@ function startProgressivePolling(mediaId) {
 function checkForFollowingSection(mediaId, forceCheck = false) {
     if (isInitialized && !forceCheck) return false;
 
-    // Try different selectors
+    // Increment retry counter for tracking
+    detectRetryCount++;
+    if (DEBUG) console.log(`Checking for Following section (attempt ${detectRetryCount})`);
+
+    // Try different selectors - expanded for better coverage
     const selectors = [
         'div[class="following"]',
         'div.following',
         '[class^="following"]',
-        '[class*=" following"]'
+        '[class*=" following"]',
+        '.medialist div[class*="following"]',
+        '.container div[class*="following"]'
     ];
 
     let followingSection = null;
 
     // Find the section
     for (const selector of selectors) {
-        const element = document.querySelector(selector);
-        if (element) {
-            followingSection = element;
-            break;
+        try {
+            const element = document.querySelector(selector);
+            if (element) {
+                followingSection = element;
+                break;
+            }
+        } catch (e) {
+            // Some selectors might cause errors in certain browsers
         }
     }
 
     if (followingSection) {
-        if (DEBUG) console.log("Following section found, checking for user entries");
+        if (DEBUG) console.log(`Following section found on attempt ${detectRetryCount}, checking for user entries`);
 
         // Short delay to ensure entries are loaded
         setTimeout(() => {
-            // User entry selectors
+            // User entry selectors - expanded
             const userEntrySelectors = [
                 'a[class="follow"]',
                 'a.follow',
                 'a[class^="follow"]',
                 'a.user',
                 'a[class*="user"]',
-                'a:has(div[class="name"])'
+                'a:has(div[class="name"])',
+                'a:has(.name)',
+                '.users a',
+                '.user a',
+                'a.name-wrapper'
             ];
 
             let userEntries = [];
@@ -356,10 +498,13 @@ function checkForFollowingSection(mediaId, forceCheck = false) {
             userEntries = uniqueEntries;
 
             if (userEntries.length > 0) {
-                if (DEBUG) console.log(`Following section found with ${userEntries.length} users`);
+                if (DEBUG) console.log(`Following section found with ${userEntries.length} users on attempt ${detectRetryCount}`);
                 setupFollowingSection(followingSection, userEntries, mediaId);
                 stopDetection();
                 return true;
+            } else if (DEBUG) {
+                // If section found but no entries, log this for debugging
+                console.log(`Following section found but no user entries detected (attempt ${detectRetryCount})`);
             }
         }, 300);
     }
@@ -1458,6 +1603,8 @@ function resetExtensionState() {
     rateLimitResetTime = null;
     pendingRequests = [];
     processingRequests = false;
+    detectRetryCount = 0;
+    failedInitializationAttempts = 0;
 
     // Stop detection systems
     stopDetection();
@@ -1576,11 +1723,7 @@ function refreshCommentIcons() {
     if (DEBUG) console.log("Refreshing comment icons based on updated cache");
 
     // Trova tutte le icone di commento attuali e le rimuove
-    const followingSection = document.querySelector('div[class="following"]') ||
-        document.querySelector('div.following') ||
-        document.querySelector('[class^="following"]') ||
-        document.querySelector('[class*=" following"]');
-
+    const followingSection = document.querySelector('div[class="following"], div.following, [class^="following"], [class*=" following"]');
     if (!followingSection) return;
 
     // Trova tutti gli user entry
@@ -1764,7 +1907,7 @@ const TooltipManager = (function() {
         }
 
         // Find the Following section
-        const followingSection = document.querySelector('div[class="following"], div.following');
+        const followingSection = document.querySelector('div[class="following"], div.following, [class^="following"], [class*=" following"]');
         if (!followingSection) {
             if (wasHidden) {
                 setTimeout(() => { tooltip.style.opacity = '1'; }, 50);
@@ -2433,6 +2576,10 @@ window.addEventListener("unload", () => {
         clearInterval(cacheCleanupTimer);
     }
 
+    if (periodicCheckTimer) {
+        clearInterval(periodicCheckTimer);
+    }
+
     // Save one last time
     if (isExtensionContextValid() && Object.keys(commentCache).length > 0) {
         try {
@@ -2529,9 +2676,55 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-// Start immediately if already loaded
-if (document.readyState !== 'loading') {
+// Implementa un meccanismo di "Early initialization" migliorato
+// Questo aiuta con SPA (Single Page Applications) come Anilist
+function attemptEarlyInitialization() {
+    if (document.readyState === 'loading') {
+        // Il documento è ancora in caricamento, aspettiamo l'evento DOMContentLoaded
+        console.log("Document still loading, waiting for DOMContentLoaded event");
+        return;
+    }
+
+    // Il documento è già caricato, possiamo inizializzare immediatamente
+    console.log("Document already loaded, initializing immediately");
+
     if (isExtensionContextValid()) {
-        loadCacheAndInitialize();
+        // Prima verifica se siamo già su una pagina anime/manga
+        const mediaInfo = extractMediaIdFromUrl();
+        if (mediaInfo) {
+            console.log(`Already on a media page (ID: ${mediaInfo.id}), initializing extension`);
+            loadCacheAndInitialize();
+        } else {
+            // Comunque, configuriamo l'osservatore URL nel caso l'utente navighi a una pagina pertinente
+            console.log("Not on a media page, setting up URL observer only");
+            urlObserver = setupUrlObserver();
+        }
     }
 }
+
+// Start immediately if already loaded
+attemptEarlyInitialization();
+
+// Retry initialization after a short delay to handle pages that load content dynamically
+setTimeout(() => {
+    const mediaInfo = extractMediaIdFromUrl();
+    if (mediaInfo && !isInitialized) {
+        console.log("Running delayed initialization check");
+        loadCacheAndInitialize();
+    }
+}, 1500);
+
+// Ultima rete di sicurezza: polling periodico per controllare la navigazione
+// Questo è necessario perché alcuni eventi di navigazione potrebbero non essere catturati dai metodi standard
+setInterval(() => {
+    if (isExtensionContextValid()) {
+        handleUrlChange();
+
+        // Se siamo su una pagina pertinente ma non ancora inizializzata, riprova
+        const mediaInfo = extractMediaIdFromUrl();
+        if (mediaInfo && !isInitialized) {
+            console.log("Periodic check found uninitialized media page, retrying");
+            initializeExtension();
+        }
+    }
+}, 5000);

@@ -69,7 +69,7 @@
 /* Main tooltip container */
 #anilist-tooltip {
   /* Fixed sizing */
-  width: 280px;
+  width: 265px;
   max-height: 500px; /* Height before scrolling appears */
   overflow-y: auto;  /* Enable vertical scrolling */
 
@@ -90,7 +90,7 @@
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(61, 180, 242, 0.1);
   border-radius: 6px;
   border-left: 3px solid #3db4f2;
-  padding: 14px;
+  padding: 10px;
   font-size: 14px;
 }
 
