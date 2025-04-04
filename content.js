@@ -1750,34 +1750,22 @@ const TooltipManager = (function() {
         return tooltip;
     }
 
-    // Position tooltip function - properly aligned with entry height
+    // Replace the existing positionTooltip function with this improved version
     function positionTooltip(element) {
         const tooltip = getTooltip();
         const viewportWidth = window.innerWidth;
         const viewportHeight = window.innerHeight;
 
-        // Make visible for size calculation
+        // Make tooltip visible but transparent for size calculation
         const wasHidden = tooltip.style.display === 'none';
         if (wasHidden) {
             tooltip.style.opacity = '0';
             tooltip.style.display = 'block';
         }
 
-        // Get tooltip dimensions
-        const tooltipWidth = tooltip.offsetWidth;
-        const tooltipHeight = tooltip.offsetHeight;
-
         // Find the Following section
         const followingSection = document.querySelector('div[class="following"], div.following');
-
         if (!followingSection) {
-            // Fallback if Following section not found
-            const defaultX = viewportWidth - 320 - 20;
-            const defaultY = window.scrollY + 100;
-
-            tooltip.style.left = defaultX + 'px';
-            tooltip.style.top = defaultY + 'px';
-
             if (wasHidden) {
                 setTimeout(() => { tooltip.style.opacity = '1'; }, 50);
             }
@@ -1788,24 +1776,14 @@ const TooltipManager = (function() {
         const followingRect = followingSection.getBoundingClientRect();
 
         // HORIZONTAL POSITIONING:
-        // Position in the right column, with margins on both sides
-        const rightMargin = 20;
-        const availableWidth = viewportWidth - (followingRect.right + 20) - rightMargin;
+        // Always position to the right of the Following section with fixed margin
+        const margin = 20;
+        const posX = followingRect.right + margin + window.scrollX;
 
-        const posX = availableWidth >= tooltipWidth
-            ? followingRect.right + 20 + window.scrollX
-            : viewportWidth - tooltipWidth - rightMargin + window.scrollX;
-
-        // VERTICAL POSITIONING - IMPROVED:
-        // Find the hovered element and its parent entry
-        const hoveredElement = element.querySelector('.anilist-comment-icon') || element;
+        // VERTICAL POSITIONING:
+        // Find the parent entry (the user row being hovered)
         const parentEntry = element.closest('a');
-
         if (!parentEntry) {
-            // Fallback if we can't find parent
-            tooltip.style.left = posX + 'px';
-            tooltip.style.top = (window.scrollY + hoveredElement.getBoundingClientRect().top) + 'px';
-
             if (wasHidden) {
                 setTimeout(() => { tooltip.style.opacity = '1'; }, 50);
             }
@@ -1815,32 +1793,31 @@ const TooltipManager = (function() {
         // Get precise coordinates of the parent entry
         const parentRect = parentEntry.getBoundingClientRect();
 
-        // Calculate the vertical center of the parent entry
-        const entryVerticalCenter = parentRect.top + (parentRect.height / 2);
+        // Align the top of the tooltip with the top of the entry
+        // This ensures the tooltip starts exactly at the entry's vertical position
+        const posY = window.scrollY + parentRect.top;
 
-        // Calculate tooltip vertical position aligned with entry center
-        let posY = window.scrollY + entryVerticalCenter - (tooltipHeight / 2);
+        // Set fixed maximum height for the tooltip to ensure it doesn't grow too large
+        tooltip.style.maxHeight = '500px'; // Increased height before scrolling appears
+        tooltip.style.overflowY = 'auto';  // Enable scrolling for long comments
 
-        // Ensure tooltip stays within viewport
-        const minY = window.scrollY + 10;
-        const maxY = window.scrollY + viewportHeight - tooltipHeight - 10;
-
-        // Constrain to viewport
-        posY = Math.max(minY, Math.min(posY, maxY));
-
-        // Store the element we're currently displaying comment for
-        tooltip.setAttribute('data-current-element',
-            parentEntry.querySelector('.name')?.textContent || '');
-
-        // Mark the hover state
+        // Mark hover state
         const allIcons = document.querySelectorAll('.anilist-comment-icon');
         allIcons.forEach(icon => icon.classList.remove('active-comment'));
-        hoveredElement.classList.add('active-comment');
+        const hoveredIcon = element.querySelector('.anilist-comment-icon');
+        if (hoveredIcon) {
+            hoveredIcon.classList.add('active-comment');
+        }
 
-        // Set tooltip position with smooth transition
-        tooltip.style.transition = "left 0.2s ease, top 0.2s ease";
+        // Set tooltip position with no transition for immediate positioning
+        tooltip.style.transition = "none";
         tooltip.style.left = posX + 'px';
         tooltip.style.top = posY + 'px';
+
+        // Re-enable transitions after positioning
+        setTimeout(() => {
+            tooltip.style.transition = "opacity 0.2s ease";
+        }, 50);
 
         if (wasHidden) {
             setTimeout(() => { tooltip.style.opacity = '1'; }, 50);
