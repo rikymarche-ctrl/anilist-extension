@@ -68,6 +68,10 @@
 
 /* Main tooltip container */
 #anilist-tooltip {
+  margin: 0;
+  /* Fixed height calculation to be more predictable */
+  box-sizing: border-box;
+
   /* Positioning */
   position: absolute;
   z-index: 100000;
@@ -274,11 +278,11 @@
   font-size: 14px;
   cursor: pointer;
   opacity: 0.8;
-  transition: color 0.2s ease, transform 0.2s ease;
   vertical-align: middle;
   visibility: visible !important;
   display: inline-block !important;
   position: relative;
+  transition: color 0.2s ease, opacity 0.2s ease, transform 0.2s ease, filter 0.2s ease !important;
 }
 
 /* Hover effect for comment icon */
@@ -291,9 +295,18 @@
 
 /* Highlighted state for active comment icon */
 .anilist-comment-icon.active-comment {
-  color: #3db4f2;
-  transform: scale(1.2);
-  filter: drop-shadow(0 0 3px rgba(61, 180, 242, 0.5));
+  color: #3db4f2 !important;
+  opacity: 1 !important;
+  transform: scale(1.2) !important;
+  filter: drop-shadow(0 0 3px rgba(61, 180, 242, 0.5)) !important;
+}
+
+/* Default state when parent is not hovered */
+a:not(:hover) .anilist-comment-icon:not(.active-comment) {
+  color: #8f98a6 !important;
+  opacity: 0.8 !important;
+  transform: none !important;
+  filter: none !important;
 }
 
 /* Container for comment icon */
@@ -308,6 +321,7 @@
   transform: translateY(-50%);
   display: flex !important;
   align-items: center !important;
+  justify-content: center !important;
 }
 
 /*------------------------------------------------------

@@ -502,7 +502,7 @@ async function checkCurrentUserComment(entry, username, mediaId) {
 
 // Add comment icon
 function addCommentIcon(entry, username, mediaId, hasComment, commentContent) {
-    // Only proceed if still in DOM
+    // Solo procedere se ancora nel DOM
     if (!entry || !entry.isConnected) {
         if (DEBUG) console.log(`Entry for ${username} is no longer in the DOM, skipping icon addition`);
         return;
@@ -513,34 +513,50 @@ function addCommentIcon(entry, username, mediaId, hasComment, commentContent) {
     const isCurrentUser = (username === currentUsername);
 
     if (hasComment) {
-        // Check for existing icon
+        // Controlla per icone esistenti
         if (entry.querySelector(".comment-icon-column")) {
             if (DEBUG) console.log(`Icon already exists for ${username}, skipping`);
             return;
         }
 
-        // Set position relative
+        // Imposta position relative
         if (window.getComputedStyle(entry).position === 'static') {
             entry.style.position = 'relative';
         }
 
-        // Create icon column
+        // Crea colonna icona
         const iconColumn = document.createElement("div");
         iconColumn.className = "comment-icon-column";
         iconColumn.style.position = "absolute";
-        iconColumn.style.top = "50%";
+
+        // MIGLIORAMENTO: Posizionamento verticale più preciso
+        // Utilizzare calc per ottenere un posizionamento perfetto
+        iconColumn.style.top = "calc(50% - 1px)"; // Compensa leggermente verso l'alto
         iconColumn.style.transform = "translateY(-50%)";
 
-        // Position based on status element
+        // MIGLIORAMENTO: Assicurarsi che non ci siano spaziature indesiderate
+        iconColumn.style.padding = "0";
+        iconColumn.style.margin = "0";
+        iconColumn.style.lineHeight = "1";
+
+        // MIGLIORAMENTO: Centratura orizzontale
+        iconColumn.style.display = "flex";
+        iconColumn.style.alignItems = "center";
+        iconColumn.style.justifyContent = "center";
+
+        // Posizione basata sull'elemento stato
         if (statusElement) {
             const statusRect = statusElement.getBoundingClientRect();
             const entryRect = entry.getBoundingClientRect();
+
+            // Calcolo originale per il posizionamento
             iconColumn.style.right = `${entryRect.right - statusRect.right + 10}px`;
         } else {
+            // Valore di fallback originale
             iconColumn.style.right = "60px";
         }
 
-        // Create icon
+        // Crea icona
         const commentIcon = document.createElement("i");
         commentIcon.className = "fa-solid fa-comment anilist-comment-icon";
         commentIcon.style.fontSize = "14px";
@@ -548,16 +564,20 @@ function addCommentIcon(entry, username, mediaId, hasComment, commentContent) {
         commentIcon.style.display = "inline-block";
         commentIcon.style.visibility = "visible";
 
-        // Add to column
+        // MIGLIORAMENTO: Assicurarsi che l'icona sia perfettamente allineata
+        commentIcon.style.verticalAlign = "middle";
+        commentIcon.style.lineHeight = "1";
+
+        // Aggiungi alla colonna
         iconColumn.appendChild(commentIcon);
 
-        // Stop click propagation
+        // Ferma propagazione click
         iconColumn.addEventListener("click", (e) => {
             e.preventDefault();
             e.stopPropagation();
         });
 
-        // Add to entry
+        // Aggiungi alla entry
         entry.appendChild(iconColumn);
 
         // Setup hover
@@ -1730,7 +1750,7 @@ const TooltipManager = (function() {
         return tooltip;
     }
 
-    // Position tooltip in right column with fixed vertical position
+    // Position tooltip function - properly aligned with entry height
     function positionTooltip(element) {
         const tooltip = getTooltip();
         const viewportWidth = window.innerWidth;
@@ -1743,11 +1763,11 @@ const TooltipManager = (function() {
             tooltip.style.display = 'block';
         }
 
-        // Get dimensions
+        // Get tooltip dimensions
         const tooltipWidth = tooltip.offsetWidth;
         const tooltipHeight = tooltip.offsetHeight;
 
-        // Find the Following section - our main reference point
+        // Find the Following section
         const followingSection = document.querySelector('div[class="following"], div.following');
 
         if (!followingSection) {
@@ -1769,55 +1789,61 @@ const TooltipManager = (function() {
 
         // HORIZONTAL POSITIONING:
         // Position in the right column, with margins on both sides
-        // Calculate available space and center tooltip with margins
-        const rightMargin = 20; // Equal margin on the right side
+        const rightMargin = 20;
         const availableWidth = viewportWidth - (followingRect.right + 20) - rightMargin;
 
-        // If space is tight, prioritize the left margin (near Following section)
         const posX = availableWidth >= tooltipWidth
             ? followingRect.right + 20 + window.scrollX
             : viewportWidth - tooltipWidth - rightMargin + window.scrollX;
 
-        // VERTICAL POSITIONING:
-        // Align exactly with the top of the Following section for perfect alignment
-        let posY = followingRect.top + window.scrollY;
-
-        // No additional offset - exact alignment with Following section
-
-        // Check if we need to adjust due to viewport constraints
-        if (posY + tooltipHeight > window.scrollY + viewportHeight - 20) {
-            // If tooltip would extend beyond bottom of viewport, adjust upward
-            posY = window.scrollY + viewportHeight - tooltipHeight - 20;
-        }
-
-        // Check if tooltip would be cut off at the top
-        if (posY < window.scrollY + 10) {
-            posY = window.scrollY + 10;
-        }
-
-        // Get the hovered element (comment icon) for highlighting
+        // VERTICAL POSITIONING - IMPROVED:
+        // Find the hovered element and its parent entry
         const hoveredElement = element.querySelector('.anilist-comment-icon') || element;
-        const hoveredRect = hoveredElement.getBoundingClientRect();
+        const parentEntry = element.closest('a');
+
+        if (!parentEntry) {
+            // Fallback if we can't find parent
+            tooltip.style.left = posX + 'px';
+            tooltip.style.top = (window.scrollY + hoveredElement.getBoundingClientRect().top) + 'px';
+
+            if (wasHidden) {
+                setTimeout(() => { tooltip.style.opacity = '1'; }, 50);
+            }
+            return;
+        }
+
+        // Get precise coordinates of the parent entry
+        const parentRect = parentEntry.getBoundingClientRect();
+
+        // Calculate the vertical center of the parent entry
+        const entryVerticalCenter = parentRect.top + (parentRect.height / 2);
+
+        // Calculate tooltip vertical position aligned with entry center
+        let posY = window.scrollY + entryVerticalCenter - (tooltipHeight / 2);
+
+        // Ensure tooltip stays within viewport
+        const minY = window.scrollY + 10;
+        const maxY = window.scrollY + viewportHeight - tooltipHeight - 10;
+
+        // Constrain to viewport
+        posY = Math.max(minY, Math.min(posY, maxY));
 
         // Store the element we're currently displaying comment for
         tooltip.setAttribute('data-current-element',
-            hoveredElement.closest('a')?.querySelector('.name')?.textContent || '');
+            parentEntry.querySelector('.name')?.textContent || '');
 
-        // Add highlight effect to the active comment
+        // Mark the hover state
         const allIcons = document.querySelectorAll('.anilist-comment-icon');
         allIcons.forEach(icon => icon.classList.remove('active-comment'));
         hoveredElement.classList.add('active-comment');
 
-        // Set position with smooth transition
+        // Set tooltip position with smooth transition
         tooltip.style.transition = "left 0.2s ease, top 0.2s ease";
         tooltip.style.left = posX + 'px';
         tooltip.style.top = posY + 'px';
 
-        // Restore visibility
         if (wasHidden) {
-            setTimeout(() => {
-                tooltip.style.opacity = '1';
-            }, 50);
+            setTimeout(() => { tooltip.style.opacity = '1'; }, 50);
         }
     }
 
@@ -1898,6 +1924,12 @@ const TooltipManager = (function() {
     function hideTooltip() {
         if (tooltip) {
             tooltip.style.display = 'none';
+
+            // Ripristina tutte le icone allo stato predefinito
+            const allIcons = document.querySelectorAll('.anilist-comment-icon');
+            allIcons.forEach(icon => {
+                icon.classList.remove('active-comment');
+            });
         }
         currentElement = null;
         isTransitioning = false;
@@ -2127,8 +2159,47 @@ const TooltipManager = (function() {
         } else {
             // Start hiding
             startHideTooltip();
+
+            // IMPORTANT: Reset icon states when not near any relevant elements
+            if (!isNearElement && !isNearTooltip && !isInCorridor && !isNearAnotherIcon) {
+                const allIcons = document.querySelectorAll('.anilist-comment-icon');
+                allIcons.forEach(icon => {
+                    if (!icon.parentElement || !icon.parentElement.matches(':hover')) {
+                        icon.classList.remove('active-comment');
+                    }
+                });
+            }
         }
     }
+
+    window.addEventListener('resize', debounce(() => {
+        // Reposition any visible tooltip
+        const tooltip = document.getElementById("anilist-tooltip");
+        if (tooltip && tooltip.style.display === 'block') {
+            const tooltipManager = TooltipManager.getInstance();
+            const currentElement = document.querySelector('.anilist-comment-icon.active-comment')?.closest('.comment-icon-column');
+
+            if (currentElement) {
+                // Reset position based on new window dimensions
+                positionTooltip(currentElement);
+            } else {
+                // Hide tooltip if we can't find the related element
+                tooltipManager.forceHide();
+            }
+        }
+    }, 100));
+
+    window.addEventListener('beforeunload', () => {
+        if (observer) {
+            observer.disconnect();
+        }
+        if (globalObserver) {
+            globalObserver.disconnect();
+        }
+        if (urlObserver) {
+            urlObserver.disconnect();
+        }
+    });
 
     // Check if near any comment icon
     function isNearAnyCommentIcon(x, y) {
@@ -2234,18 +2305,93 @@ const TooltipManager = (function() {
             return instance;
         }
     };
+
+    return {
+        // Show tooltip
+        show: function(element, username, mediaId) {
+            startShowTooltip(element, username, mediaId);
+        },
+
+        // Start hiding
+        hide: function() {
+            startHideTooltip();
+        },
+
+        // Force hide
+        forceHide: function() {
+            if (tooltip) {
+                tooltip.style.display = 'none';
+
+                // Reset all icons to default state
+                const allIcons = document.querySelectorAll('.anilist-comment-icon');
+                allIcons.forEach(icon => {
+                    icon.classList.remove('active-comment');
+                    icon.style.color = "";
+                    icon.style.opacity = "";
+                    icon.style.transform = "";
+                    icon.style.filter = "";
+                });
+            }
+            currentElement = null;
+            isTransitioning = false;
+        },
+
+        // Refresh content
+        refreshContent: async function() {
+            // existing refresh code
+        },
+
+        // Cleanup
+        cleanup: function() {
+            // existing cleanup code
+        }
+    };
 })();
 
 // Setup hover listener
 function setupHoverListener(element, username, mediaId, cachedComment = null) {
     const tooltipManager = TooltipManager.getInstance();
+    const commentIcon = element.querySelector(".anilist-comment-icon");
 
-    // Add mouseenter event
+    // Get the parent entry row (the <a> element)
+    const parentRow = element.closest("a");
+
+    if (parentRow) {
+        // Handle row hover state
+        parentRow.addEventListener("mouseenter", () => {
+            if (commentIcon) {
+                commentIcon.style.color = "#3db4f2";
+                commentIcon.style.opacity = "1";
+            }
+        });
+
+        parentRow.addEventListener("mouseleave", (e) => {
+            // Only reset icon if not hovering the icon itself and not active
+            const rect = element.getBoundingClientRect();
+            const isOverIcon = e.clientX >= rect.left && e.clientX <= rect.right &&
+                e.clientY >= rect.top && e.clientY <= rect.bottom;
+
+            if (!isOverIcon && commentIcon && !commentIcon.classList.contains('active-comment')) {
+                resetIconState(commentIcon);
+            }
+
+            // Additional check: if we have left the row, also check tooltip
+            const tooltip = document.getElementById("anilist-tooltip");
+            if (tooltip && tooltip.style.display === 'block') {
+                const tooltipUsername = tooltip.getAttribute('data-username');
+                // If tooltip shows different username, we can reset this icon
+                if (tooltipUsername !== username) {
+                    resetIconState(commentIcon);
+                }
+            }
+        });
+    }
+
+    // Icon hover handling
     element.addEventListener("mouseenter", () => {
         tooltipManager.show(element, username, mediaId);
     });
 
-    // Add mouseleave event
     element.addEventListener("mouseleave", () => {
         setTimeout(() => {
             tooltipManager.hide();
@@ -2254,16 +2400,40 @@ function setupHoverListener(element, username, mediaId, cachedComment = null) {
 
     // Return cleanup function
     return function cleanup() {
-        element.removeEventListener("mouseenter", () => {
-            tooltipManager.show(element, username, mediaId);
-        });
+        if (parentRow) {
+            parentRow.removeEventListener("mouseenter", () => {});
+            parentRow.removeEventListener("mouseleave", () => {});
+        }
 
-        element.removeEventListener("mouseleave", () => {
-            setTimeout(() => {
-                tooltipManager.hide();
-            }, 50);
-        });
+        element.removeEventListener("mouseenter", () => {});
+        element.removeEventListener("mouseleave", () => {});
     };
+}
+
+// Helper function to reset icon state
+function resetIconState(icon) {
+    if (!icon) return;
+
+    // Remove active class
+    icon.classList.remove('active-comment');
+
+    // Reset inline styles
+    icon.style.color = "";
+    icon.style.opacity = "";
+    icon.style.transform = "";
+    icon.style.filter = "";
+}
+
+function forceHide() {
+    hideTooltip();
+    resetCommentIconStates(); // Make sure all icons reset
+}
+
+function resetCommentIconStates() {
+    const allIcons = document.querySelectorAll('.anilist-comment-icon');
+    allIcons.forEach(icon => {
+        resetIconState(icon);
+    });
 }
 
 // Handle unload
