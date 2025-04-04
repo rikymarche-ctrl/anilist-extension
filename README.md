@@ -4,7 +4,7 @@
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 
-![Anilist Hover Comments](https://i.imgur.com/d0qCT76.png)
+![Anilist Hover Comments](https://imgur.com/hPQXPmv.png)
 
 ## Overview
 
