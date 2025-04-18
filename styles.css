@@ -373,3 +373,129 @@ div.following a {
     font-size: 13px;
   }
 }
+
+/* Dark Theme (Default) */
+#anilist-tooltip.theme-dark {
+  background: rgba(38, 44, 55, 0.97);
+  color: white;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(61, 180, 242, 0.1);
+  border-left: 3px solid #3db4f2;
+}
+
+#anilist-tooltip.theme-dark::after {
+  border-right: 8px solid rgba(38, 44, 55, 0.97);
+}
+
+#anilist-tooltip.theme-dark .tooltip-refresh-btn {
+  background: rgba(61, 180, 242, 0.2);
+  color: white;
+}
+
+#anilist-tooltip.theme-dark .tooltip-footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#anilist-tooltip.theme-dark .no-comment {
+  color: #aaa;
+}
+
+/* Light Theme */
+#anilist-tooltip.theme-light {
+  background: rgba(245, 246, 248, 0.97);
+  color: #313131;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(61, 180, 242, 0.1);
+  border-left: 3px solid #3db4f2;
+}
+
+#anilist-tooltip.theme-light::after {
+  border-right: 8px solid rgba(245, 246, 248, 0.97);
+}
+
+#anilist-tooltip.theme-light .tooltip-refresh-btn {
+  background: rgba(61, 180, 242, 0.2);
+  color: #313131;
+}
+
+#anilist-tooltip.theme-light .tooltip-footer {
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+#anilist-tooltip.theme-light .no-comment {
+  color: #666;
+}
+
+/* Theme-specific rate limit warning */
+.rate-limit-warning.theme-dark {
+  background-color: rgba(255, 50, 50, 0.1);
+  border: 1px solid rgba(255, 50, 50, 0.3);
+  color: #ff6b6b;
+}
+
+.rate-limit-warning.theme-light {
+  background-color: rgba(255, 50, 50, 0.05);
+  border: 1px solid rgba(255, 50, 50, 0.2);
+  color: #e63939;
+}
+
+/* Dark Theme (Default) */
+#anilist-tooltip.theme-dark {
+  background: rgba(38, 44, 55, 0.97);
+  color: white;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(61, 180, 242, 0.1);
+  border-left: 3px solid #3db4f2;
+}
+
+#anilist-tooltip.theme-dark::after {
+  border-right: 8px solid rgba(38, 44, 55, 0.97);
+}
+
+#anilist-tooltip.theme-dark .tooltip-refresh-btn {
+  background: rgba(61, 180, 242, 0.2);
+  color: white;
+}
+
+#anilist-tooltip.theme-dark .tooltip-footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#anilist-tooltip.theme-dark .no-comment {
+  color: #aaa;
+}
+
+/* Light Theme */
+#anilist-tooltip.theme-light {
+  background: rgba(245, 246, 248, 0.97);
+  color: #313131;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(61, 180, 242, 0.1);
+  border-left: 3px solid #3db4f2;
+}
+
+#anilist-tooltip.theme-light::after {
+  border-right: 8px solid rgba(245, 246, 248, 0.97);
+}
+
+#anilist-tooltip.theme-light .tooltip-refresh-btn {
+  background: rgba(61, 180, 242, 0.2);
+  color: #313131;
+}
+
+#anilist-tooltip.theme-light .tooltip-footer {
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+#anilist-tooltip.theme-light .no-comment {
+  color: #666;
+}
+
+/* Theme-specific rate limit warning */
+.rate-limit-warning.theme-dark {
+  background-color: rgba(255, 50, 50, 0.1);
+  border: 1px solid rgba(255, 50, 50, 0.3);
+  color: #ff6b6b;
+}
+
+.rate-limit-warning.theme-light {
+  background-color: rgba(255, 50, 50, 0.05);
+  border: 1px solid rgba(255, 50, 50, 0.2);
+  color: #e63939;
+}

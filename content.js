@@ -15,7 +15,6 @@ const MAX_CACHE_ENTRIES = 250;
 const CACHE_CLEANUP_INTERVAL = 30 * 60 * 1000; // 30 minutes
 
 // API Request management
-const MIN_REQUEST_DELAY = 2000; // 2 seconds between requests
 const MAX_REQUESTS_PER_MINUTE = 20;
 const BATCH_SIZE = 4; // Process this many requests in parallel
 const BATCH_COOLDOWN = 3000; // Wait between batches (ms)
@@ -30,7 +29,6 @@ const RETRY_DELAY_FACTOR = 2; // Exponential backoff
 let commentCache = {};
 let mediaUserMap = {};
 let cacheCleanupTimer = null;
-let lastRequestTime = 0;
 let pendingRequests = [];
 let processingRequests = false;
 let requestsInLastMinute = 0;
@@ -207,6 +205,51 @@ function stopDetection() {
     }
 }
 
+// Helper function to find user entries in following section
+function findUserEntries(followingSection) {
+    // Standard user entry selectors
+    const userEntrySelectors = [
+        'a[class="follow"]',
+        'a.follow',
+        'a[class^="follow"]',
+        'a.user',
+        'a[class*="user"]',
+        'a:has(div[class="name"])',
+        'a:has(.name)',
+        '.users a',
+        '.user a',
+        'a.name-wrapper'
+    ];
+
+    let userEntries = [];
+
+    // Find all entries matching any selector
+    for (const selector of userEntrySelectors) {
+        try {
+            const entries = followingSection.querySelectorAll(selector);
+            if (entries.length > 0) {
+                userEntries = [...userEntries, ...Array.from(entries)];
+            }
+        } catch (e) {
+            // Some selectors might not be supported
+        }
+    }
+
+    // Deduplicate entries
+    const uniqueEntries = [];
+    const seenElements = new Set();
+
+    for (const entry of userEntries) {
+        const entryId = entry.textContent?.trim() || entry.innerHTML;
+        if (!seenElements.has(entryId)) {
+            seenElements.add(entryId);
+            uniqueEntries.push(entry);
+        }
+    }
+
+    return uniqueEntries;
+}
+
 // Persistent detection system for the Following section
 function startPersistentDetection(mediaId) {
     console.log("Starting persistent detection system...");
@@ -326,28 +369,8 @@ function verifyCommentIcons(mediaId) {
     const followingSection = document.querySelector('div[class="following"], div.following, [class^="following"], [class*=" following"]');
     if (!followingSection) return;
 
-    // Find all user entries that should have comment icons
-    const userEntrySelectors = [
-        'a[class="follow"]',
-        'a.follow',
-        'a[class^="follow"]',
-        'a.user',
-        'a[class*="user"]',
-        'a:has(div[class="name"])'
-    ];
-
-    let userEntries = [];
-    for (const selector of userEntrySelectors) {
-        try {
-            const entries = followingSection.querySelectorAll(selector);
-            if (entries.length > 0) {
-                userEntries = [...userEntries, ...Array.from(entries)];
-            }
-        } catch (e) {
-            // Some selectors might not be supported
-        }
-    }
-
+    // Get user entries
+    const userEntries = findUserEntries(followingSection);
     if (userEntries.length === 0) return;
 
     // Check if any entries are missing icons
@@ -364,8 +387,8 @@ function verifyCommentIcons(mediaId) {
             // But icon is missing
             if (!entry.querySelector(".comment-icon-column")) {
                 missingIcons = true;
-                const commentContent = getCachedComment(cacheKey, false);
-                addCommentIcon(entry, username, mediaId, true, commentContent);
+                getCachedComment(cacheKey, false);
+                addCommentIcon(entry, username, mediaId, true);
             }
         }
     }
@@ -455,47 +478,8 @@ function checkForFollowingSection(mediaId, forceCheck = false) {
 
         // Short delay to ensure entries are loaded
         setTimeout(() => {
-            // User entry selectors - expanded
-            const userEntrySelectors = [
-                'a[class="follow"]',
-                'a.follow',
-                'a[class^="follow"]',
-                'a.user',
-                'a[class*="user"]',
-                'a:has(div[class="name"])',
-                'a:has(.name)',
-                '.users a',
-                '.user a',
-                'a.name-wrapper'
-            ];
-
-            let userEntries = [];
-
-            // Find user entries
-            for (const selector of userEntrySelectors) {
-                try {
-                    const entries = followingSection.querySelectorAll(selector);
-                    if (entries.length > 0) {
-                        userEntries = [...userEntries, ...Array.from(entries)];
-                    }
-                } catch (e) {
-                    // Some selectors might not be supported
-                }
-            }
-
-            // Deduplicate entries
-            const uniqueEntries = [];
-            const seenElements = new Set();
-
-            for (const entry of userEntries) {
-                const entryId = entry.textContent?.trim() || entry.innerHTML;
-                if (!seenElements.has(entryId)) {
-                    seenElements.add(entryId);
-                    uniqueEntries.push(entry);
-                }
-            }
-
-            userEntries = uniqueEntries;
+            // Get user entries
+            const userEntries = findUserEntries(followingSection);
 
             if (userEntries.length > 0) {
                 if (DEBUG) console.log(`Following section found with ${userEntries.length} users on attempt ${detectRetryCount}`);
@@ -547,7 +531,9 @@ function setupFollowingSection(followingSection, userEntries, mediaId) {
             // Process current user immediately
             if (username === currentUsername) {
                 if (DEBUG) console.log(`Found current user (${username}) entry, processing immediately`);
-                checkCurrentUserComment(entry, username, mediaId);
+                (async () => {
+                    await checkCurrentUserComment(entry, username, mediaId);
+                })();
             }
         }
     }
@@ -565,11 +551,11 @@ function setupFollowingSection(followingSection, userEntries, mediaId) {
         // Check cache first
         if (commentCache[cacheKey]) {
             const hasComment = hasCachedComment(cacheKey);
-            const commentContent = getCachedComment(cacheKey, false); // Disable validation
+            getCachedComment(cacheKey, false); // Disable validation
 
             if (hasComment) {
                 if (DEBUG) console.log(`Adding comment icon for ${username} from cache`);
-                addCommentIcon(entry, username, mediaId, true, commentContent);
+                addCommentIcon(entry, username, mediaId, true);
 
                 // Skip API if cache is valid
                 const now = Date.now();
@@ -638,108 +624,72 @@ async function checkCurrentUserComment(entry, username, mediaId) {
     // Add icon if comment exists
     if (comment && comment.trim() !== '') {
         if (DEBUG) console.log(`Current user has comment for media ${mediaId}: "${comment}"`);
-        addCommentIcon(entry, username, mediaId, true, comment);
+        addCommentIcon(entry, username, mediaId, true);
         saveCache();
     } else {
         if (DEBUG) console.log(`Current user has no comment for media ${mediaId}`);
     }
 }
 
-// Add comment icon
-function addCommentIcon(entry, username, mediaId, hasComment, commentContent) {
-    // Solo procedere se ancora nel DOM
+// Add comment icon - REFACTORED to use CSS classes
+function addCommentIcon(entry, username, mediaId, hasComment) {
+    // Only proceed if still in the DOM
     if (!entry || !entry.isConnected) {
         if (DEBUG) console.log(`Entry for ${username} is no longer in the DOM, skipping icon addition`);
         return;
     }
 
-    const scoreElement = entry.querySelector("span");
-    const statusElement = entry.querySelector("div[class='status']");
-    const isCurrentUser = (username === currentUsername);
+    // Check if icon already exists
+    if (entry.querySelector(".comment-icon-column")) {
+        if (DEBUG) console.log(`Icon already exists for ${username}, skipping`);
+        return;
+    }
 
     if (hasComment) {
-        // Controlla per icone esistenti
-        if (entry.querySelector(".comment-icon-column")) {
-            if (DEBUG) console.log(`Icon already exists for ${username}, skipping`);
-            return;
-        }
-
-        // Imposta position relative
+        // Set position relative if needed
         if (window.getComputedStyle(entry).position === 'static') {
             entry.style.position = 'relative';
         }
 
-        // Crea colonna icona
+        // Create the icon column
         const iconColumn = document.createElement("div");
         iconColumn.className = "comment-icon-column";
-        iconColumn.style.position = "absolute";
 
-        // MIGLIORAMENTO: Posizionamento verticale più preciso
-        // Utilizzare calc per ottenere un posizionamento perfetto
-        iconColumn.style.top = "calc(50% - 1px)"; // Compensa leggermente verso l'alto
-        iconColumn.style.transform = "translateY(-50%)";
-
-        // MIGLIORAMENTO: Assicurarsi che non ci siano spaziature indesiderate
-        iconColumn.style.padding = "0";
-        iconColumn.style.margin = "0";
-        iconColumn.style.lineHeight = "1";
-
-        // MIGLIORAMENTO: Centratura orizzontale
-        iconColumn.style.display = "flex";
-        iconColumn.style.alignItems = "center";
-        iconColumn.style.justifyContent = "center";
-
-        // Posizione basata sull'elemento stato
+        // Position based on status element
+        const statusElement = entry.querySelector("div[class='status']");
         if (statusElement) {
             const statusRect = statusElement.getBoundingClientRect();
             const entryRect = entry.getBoundingClientRect();
-
-            // Calcolo originale per il posizionamento
             iconColumn.style.right = `${entryRect.right - statusRect.right + 10}px`;
         } else {
-            // Valore di fallback originale
             iconColumn.style.right = "60px";
         }
 
-        // Crea icona
+        // Create comment icon
         const commentIcon = document.createElement("i");
         commentIcon.className = "fa-solid fa-comment anilist-comment-icon";
-        commentIcon.style.fontSize = "14px";
-        commentIcon.style.cursor = "pointer";
-        commentIcon.style.display = "inline-block";
-        commentIcon.style.visibility = "visible";
 
-        // MIGLIORAMENTO: Assicurarsi che l'icona sia perfettamente allineata
-        commentIcon.style.verticalAlign = "middle";
-        commentIcon.style.lineHeight = "1";
-
-        // Aggiungi alla colonna
+        // Add to column
         iconColumn.appendChild(commentIcon);
 
-        // Ferma propagazione click
+        // Stop click propagation
         iconColumn.addEventListener("click", (e) => {
             e.preventDefault();
             e.stopPropagation();
         });
 
-        // Aggiungi alla entry
+        // Add to entry
         entry.appendChild(iconColumn);
 
-        // Setup hover
-        setupHoverListener(iconColumn, username, mediaId, commentContent);
+        // Set up hover listener
+        setupHoverListener(iconColumn, username, mediaId);
     }
 }
 
-// Add rate limit warning
+// Add rate limit warning - REFACTORED to use CSS classes
 function addRateLimitWarning(followingSection) {
     const warningDiv = document.createElement('div');
     warningDiv.className = 'rate-limit-warning';
-    warningDiv.style.backgroundColor = 'rgba(255, 50, 50, 0.1)';
-    warningDiv.style.border = '1px solid rgba(255, 50, 50, 0.3)';
-    warningDiv.style.borderRadius = '4px';
-    warningDiv.style.padding = '10px';
-    warningDiv.style.marginBottom = '15px';
-    warningDiv.style.fontSize = '14px';
 
     let resetMessage = '';
     if (rateLimitResetTime) {
@@ -753,98 +703,9 @@ function addRateLimitWarning(followingSection) {
     followingSection.parentNode.insertBefore(warningDiv, followingSection);
 }
 
-// Tooltip content update
-window.updateTooltipContent = function(tooltip, comment, username, mediaId) {
-    tooltip.textContent = "";
-
-    // Header removed as requested
-
-    // Create container
-    const contentContainer = document.createElement("div");
-    contentContainer.className = "tooltip-content";
-
-    // Basic media ID check (less restrictive)
-    const currentPath = window.location.pathname;
-    const currentMediaMatch = currentPath.match(/\/(anime|manga)\/(\d+)/);
-    const currentMediaId = currentMediaMatch ? parseInt(currentMediaMatch[2]) : null;
-
-    // Store username/mediaId as data attributes for sync updates
-    tooltip.setAttribute('data-username', username);
-    tooltip.setAttribute('data-media-id', mediaId);
-
-    // No username display - display comment directly
-    // Display comment
-    if (comment && comment.trim() !== "") {
-        const commentDiv = document.createElement("div");
-        commentDiv.className = "comment";
-        commentDiv.textContent = comment;
-        contentContainer.appendChild(commentDiv);
-
-        // Add warning only for obvious mismatches
-        if (currentMediaId && mediaId && currentMediaId !== mediaId && Math.abs(currentMediaId - mediaId) > 10000) {
-            const warningDiv = document.createElement("div");
-            warningDiv.className = "tooltip-warning";
-            warningDiv.style.fontSize = "10px";
-            warningDiv.style.marginTop = "5px";
-            warningDiv.innerHTML = '<i class="fa-solid fa-info-circle"></i> This comment might be for a different anime/manga.';
-            contentContainer.appendChild(warningDiv);
-
-            if (DEBUG) console.log(`Possible mismatch: page ID ${currentMediaId}, comment for ID ${mediaId}`);
-        }
-    } else {
-        const noCommentDiv = document.createElement("div");
-        noCommentDiv.className = "no-comment";
-        noCommentDiv.textContent = "No comment";
-        contentContainer.appendChild(noCommentDiv);
-    }
-
-    // Add container
-    tooltip.appendChild(contentContainer);
-
-    // Cache info
-    let cacheDate = null;
-    let cacheAge = null;
-    const cacheKey = `${username}-${mediaId}`;
-
-    if (commentCache[cacheKey]) {
-        if (typeof commentCache[cacheKey] === 'object' && commentCache[cacheKey].timestamp) {
-            cacheDate = new Date(commentCache[cacheKey].timestamp);
-            const now = Date.now();
-            cacheAge = now - commentCache[cacheKey].timestamp;
-        }
-    }
-
-    // Add footer
-    const footerDiv = document.createElement("div");
-    footerDiv.className = "tooltip-footer";
-
-    // Cache info text
-    const infoSpan = document.createElement("span");
-    infoSpan.className = "tooltip-info";
-
-    if (cacheDate) {
-        // Format age
-        const timeAgo = getTimeAgo(cacheDate);
-        infoSpan.setAttribute('data-timestamp', cacheDate.toISOString());
-
-        // Show warning if old
-        if (cacheAge > (CACHE_MAX_AGE * 0.75)) {
-            infoSpan.innerHTML = `<i class="fa-solid fa-clock"></i> Cached ${timeAgo}`;
-            infoSpan.style.color = "#ffcc00";
-        } else {
-            infoSpan.textContent = `Cached ${timeAgo}`;
-        }
-    } else {
-        infoSpan.textContent = `${username}'s comment`;
-    }
-
-    // Refresh button
-    const refreshButton = document.createElement("button");
-    refreshButton.className = "tooltip-refresh-btn";
-    refreshButton.innerHTML = '<i class="fa-solid fa-sync"></i> Refresh';
-
-    // Refresh handler
-    const handleRefresh = async () => {
+// Create refresh handler function - NEW HELPER
+function createRefreshHandler(refreshButton, username, mediaId, tooltip) {
+    return async function handleRefresh() {
         refreshButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Refreshing...';
         refreshButton.disabled = true;
 
@@ -913,9 +774,95 @@ window.updateTooltipContent = function(tooltip, comment, username, mediaId) {
             }, 2000);
         }
     };
+}
 
-    // Add event listener
-    refreshButton.addEventListener("click", handleRefresh);
+// Tooltip content update - REFACTORED to avoid inline styles
+window.updateTooltipContent = function(tooltip, comment, username, mediaId) {
+    tooltip.textContent = "";
+
+    // Store username/mediaId as data attributes for updates
+    tooltip.setAttribute('data-username', username);
+    tooltip.setAttribute('data-media-id', mediaId);
+
+    // Create container
+    const contentContainer = document.createElement("div");
+    contentContainer.className = "tooltip-content";
+
+    // Basic media ID check
+    const currentPath = window.location.pathname;
+    const currentMediaMatch = currentPath.match(/\/(anime|manga)\/(\d+)/);
+    const currentMediaId = currentMediaMatch ? parseInt(currentMediaMatch[2]) : null;
+
+    // Display comment
+    if (comment && comment.trim() !== "") {
+        const commentDiv = document.createElement("div");
+        commentDiv.className = "comment";
+        commentDiv.textContent = comment;
+        contentContainer.appendChild(commentDiv);
+
+        // Add warning only for obvious mismatches
+        if (currentMediaId && mediaId && currentMediaId !== mediaId && Math.abs(currentMediaId - mediaId) > 10000) {
+            const warningDiv = document.createElement("div");
+            warningDiv.className = "tooltip-warning";
+            warningDiv.innerHTML = '<i class="fa-solid fa-info-circle"></i> This comment might be for a different anime/manga.';
+            contentContainer.appendChild(warningDiv);
+
+            if (DEBUG) console.log(`Possible mismatch: page ID ${currentMediaId}, comment for ID ${mediaId}`);
+        }
+    } else {
+        const noCommentDiv = document.createElement("div");
+        noCommentDiv.className = "no-comment";
+        noCommentDiv.textContent = "No comment";
+        contentContainer.appendChild(noCommentDiv);
+    }
+
+    // Add container
+    tooltip.appendChild(contentContainer);
+
+    // Cache info
+    let cacheDate = null;
+    let cacheAge = null;
+    const cacheKey = `${username}-${mediaId}`;
+
+    if (commentCache[cacheKey]) {
+        if (typeof commentCache[cacheKey] === 'object' && commentCache[cacheKey].timestamp) {
+            cacheDate = new Date(commentCache[cacheKey].timestamp);
+            const now = Date.now();
+            cacheAge = now - commentCache[cacheKey].timestamp;
+        }
+    }
+
+    // Add footer
+    const footerDiv = document.createElement("div");
+    footerDiv.className = "tooltip-footer";
+
+    // Cache info text
+    const infoSpan = document.createElement("span");
+    infoSpan.className = "tooltip-info";
+
+    if (cacheDate) {
+        // Format age
+        const timeAgo = getTimeAgo(cacheDate);
+        infoSpan.setAttribute('data-timestamp', cacheDate.toISOString());
+
+        // Show warning if old
+        if (cacheAge > (CACHE_MAX_AGE * 0.75)) {
+            infoSpan.innerHTML = `<i class="fa-solid fa-clock"></i> Cached ${timeAgo}`;
+            infoSpan.style.color = "#ffcc00";
+        } else {
+            infoSpan.textContent = `Cached ${timeAgo}`;
+        }
+    } else {
+        infoSpan.textContent = `${username}'s comment`;
+    }
+
+    // Refresh button
+    const refreshButton = document.createElement("button");
+    refreshButton.className = "tooltip-refresh-btn";
+    refreshButton.innerHTML = '<i class="fa-solid fa-sync"></i> Refresh';
+
+    // Add refresh handler
+    refreshButton.addEventListener("click", createRefreshHandler(refreshButton, username, mediaId, tooltip));
 
     // Add to footer
     footerDiv.appendChild(infoSpan);
@@ -968,7 +915,7 @@ function queueApiRequest(request) {
 }
 
 // Start processing requests
-function startProcessingRequests() {
+async function startProcessingRequests() {
     if (processingRequests || pendingRequests.length === 0 || isRateLimited) return;
 
     // Optimize queue
@@ -977,7 +924,7 @@ function startProcessingRequests() {
     if (pendingRequests.length === 0) return;
 
     processingRequests = true;
-    processNextBatch();
+    await processNextBatch();
 }
 
 // Optimize request queue
@@ -1006,7 +953,7 @@ function optimizeRequestQueue() {
                 const hasComment = content && content !== "__has_comment__" && content.trim() !== '';
 
                 if (hasComment) {
-                    addCommentIcon(request.entry, request.username, request.mediaId, hasComment, content);
+                    addCommentIcon(request.entry, request.username, request.mediaId, hasComment);
                 }
             }
             continue;
@@ -1121,7 +1068,7 @@ async function processNextBatch() {
 
                     // Add icon if needed
                     if (request.entry && hasComment) {
-                        addCommentIcon(request.entry, request.username, request.mediaId, hasComment, comment);
+                        addCommentIcon(request.entry, request.username, request.mediaId, hasComment);
                     }
                 }
 
@@ -1228,15 +1175,11 @@ function trimCache() {
 
     if (DEBUG) console.log(`Trimming cache: removing ${entriesToRemove} oldest entries`);
 
-    // Create new cache
-    const newCache = {};
-
     // Keep newer entries
+    commentCache = {};
     for (let i = entriesToRemove; i < cacheEntries.length; i++) {
-        newCache[cacheEntries[i][0]] = cacheEntries[i][1];
+        commentCache[cacheEntries[i][0]] = cacheEntries[i][1];
     }
-
-    commentCache = newCache;
 
     // Save
     saveCache();
@@ -1386,7 +1329,6 @@ function getCachedComment(cacheKey, validateMedia = true) {
     if (validateMedia) {
         const keyParts = cacheKey.split('-');
         if (keyParts.length >= 2) {
-            const username = keyParts[0];
             const mediaId = parseInt(keyParts[1]);
 
             // Current media info
@@ -1428,10 +1370,6 @@ async function fetchUserComment(username, mediaId) {
     if (FORCE_DEBUG) {
         console.log(`Fetch request for ${username} on media ${mediaId} (current user: ${isCurrentUser})`);
     }
-
-    // Check current page media ID
-    const currentMediaInfo = extractMediaIdFromUrl();
-    const currentMediaId = currentMediaInfo ? currentMediaInfo.id : null;
 
     // Use cache when rate limited
     const cacheKey = `${username}-${mediaId}`;
@@ -1487,7 +1425,7 @@ async function fetchUserComment(username, mediaId) {
                 body: JSON.stringify({ query, variables })
             });
 
-            // Handle HTTP errors
+            // Handle HTTP errors without throwing
             if (!response.ok) {
                 const status = response.status;
 
@@ -1495,30 +1433,81 @@ async function fetchUserComment(username, mediaId) {
                 if (status === 429) {
                     isRateLimited = true;
                     rateLimitResetTime = Date.now() + 300000;
-                    throw new Error("Rate limit exceeded (HTTP 429)");
+
+                    // Add UI warning
+                    setTimeout(() => {
+                        const followingSection = document.querySelector('div[class="following"]');
+                        if (followingSection && !document.querySelector('.rate-limit-warning')) {
+                            addRateLimitWarning(followingSection);
+                        }
+                    }, 100);
+
+                    // Cache empty result
+                    commentCache[cacheKey] = "";
+
+                    return "Rate limit reached. Try again later.";
                 }
 
-                throw new Error(`HTTP error ${status}`);
+                // For other HTTP errors, continue with retry logic
+                retryCount++;
+                if (retryCount <= MAX_RETRIES) {
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= RETRY_DELAY_FACTOR;
+                    continue;
+                } else {
+                    // Return empty after max retries
+                    return "";
+                }
             }
 
             const data = await response.json();
 
-            // Check for errors
+            // Check for errors without throwing
             if (data.errors) {
                 if (data.errors.some(e => e.message && e.message.toLowerCase().includes('rate'))) {
                     isRateLimited = true;
                     rateLimitResetTime = Date.now() + 300000;
-                    throw new Error("Rate limit exceeded in response");
+
+                    // Add UI warning
+                    setTimeout(() => {
+                        const followingSection = document.querySelector('div[class="following"]');
+                        if (followingSection && !document.querySelector('.rate-limit-warning')) {
+                            addRateLimitWarning(followingSection);
+                        }
+                    }, 100);
+
+                    // Cache empty result
+                    commentCache[cacheKey] = "";
+
+                    return "Rate limit reached. Try again later.";
                 }
-                throw new Error(data.errors[0].message || "Unknown GraphQL error");
+
+                // For other GraphQL errors, continue with retry logic
+                retryCount++;
+                if (retryCount <= MAX_RETRIES) {
+                    const errorMsg = data.errors[0].message || "Unknown GraphQL error";
+                    console.error(`GraphQL error (attempt ${retryCount}/${MAX_RETRIES + 1}):`, errorMsg);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= RETRY_DELAY_FACTOR;
+                    continue;
+                } else {
+                    // Return empty after max retries
+                    return "";
+                }
             }
 
             // Extract notes
             if (data.data && data.data.MediaList) {
-                return data.data.MediaList.notes || "";
+                const notes = data.data.MediaList.notes || "";
+                // Cache successful result
+                commentCache[cacheKey] = notes;
+                return notes;
             }
 
+            // Cache empty result
+            commentCache[cacheKey] = "";
             return "";
+
         } catch (error) {
             const currentAttempt = retryCount + 1;
             console.error(`API request error (attempt ${currentAttempt}/${MAX_RETRIES + 1}):`, error);
@@ -1542,6 +1531,8 @@ async function fetchUserComment(username, mediaId) {
                     }
                 }, 100);
 
+                // Cache the result
+                commentCache[cacheKey] = "Rate limit reached. Try again later.";
                 return "Rate limit reached. Try again later.";
             }
 
@@ -1555,10 +1546,15 @@ async function fetchUserComment(username, mediaId) {
                 await new Promise(resolve => setTimeout(resolve, waitTime));
                 delay *= RETRY_DELAY_FACTOR;
             } else {
+                // Cache empty result after max retries
+                commentCache[cacheKey] = "";
                 return "";
             }
         }
     }
+
+    // This line should never be reached, but added for safety
+    return "";
 }
 
 // Core initialization
@@ -1642,15 +1638,14 @@ function loadCacheAndInitialize() {
     if (!isExtensionContextValid()) return;
 
     try {
-        // Richiedere TUTTI i campi rilevanti dalla storage
         chrome.storage.local.get(null, function(result) {
             if (!isExtensionContextValid()) return;
 
-            // Caricamento commentCache
+            // Load comment cache
             if (result.commentCache) {
                 if (DEBUG) console.log("Comment cache loaded from storage:", Object.keys(result.commentCache).length, "items");
 
-                // Elaborazione della cache come prima
+                // Process the cache
                 const now = Date.now();
                 const validEntries = {};
                 let expiredCount = 0;
@@ -1659,7 +1654,7 @@ function loadCacheAndInitialize() {
                     if (typeof value === 'object' && value.timestamp && (now - value.timestamp) < CACHE_MAX_AGE) {
                         validEntries[key] = value;
                     } else if (typeof value === 'string' && value !== "__has_comment__") {
-                        // Migrazione formato vecchio
+                        // Migrate old format
                         validEntries[key] = {
                             content: value,
                             timestamp: now
@@ -1679,12 +1674,16 @@ function loadCacheAndInitialize() {
                 }
             }
 
-            // Ripristino mediaUserMap
+            // Restore mediaUserMap
             if (result.mediaUserMap) {
                 try {
                     mediaUserMap = {};
                     for (const [mediaId, users] of Object.entries(result.mediaUserMap)) {
-                        mediaUserMap[mediaId] = new Set(users);
+                        if (Array.isArray(users)) {
+                            mediaUserMap[mediaId] = new Set(users);
+                        } else {
+                            mediaUserMap[mediaId] = new Set();
+                        }
                     }
 
                     if (DEBUG) {
@@ -1699,10 +1698,10 @@ function loadCacheAndInitialize() {
                 rebuildMediaUserMap();
             }
 
-            // Avviare timer pulizia cache
+            // Start cache cleanup timer
             startCacheCleanupTimer();
 
-            // Inizializzare estensione
+            // Initialize extension
             initializeExtension();
         });
     } catch (e) {
@@ -1713,7 +1712,7 @@ function loadCacheAndInitialize() {
     }
 }
 
-// Funzione che aggiorna le icone di commento basate sulla cache attuale
+// Function to update comment icons based on current cache
 function refreshCommentIcons() {
     const currentMediaInfo = extractMediaIdFromUrl();
     const currentMediaId = currentMediaInfo ? currentMediaInfo.id : null;
@@ -1722,71 +1721,34 @@ function refreshCommentIcons() {
 
     if (DEBUG) console.log("Refreshing comment icons based on updated cache");
 
-    // Trova tutte le icone di commento attuali e le rimuove
+    // Find the Following section
     const followingSection = document.querySelector('div[class="following"], div.following, [class^="following"], [class*=" following"]');
     if (!followingSection) return;
 
-    // Trova tutti gli user entry
-    const userEntrySelectors = [
-        'a[class="follow"]',
-        'a.follow',
-        'a[class^="follow"]',
-        'a.user',
-        'a[class*="user"]',
-        'a:has(div[class="name"])'
-    ];
-
-    let userEntries = [];
-
-    // Trova user entries
-    for (const selector of userEntrySelectors) {
-        try {
-            const entries = followingSection.querySelectorAll(selector);
-            if (entries.length > 0) {
-                userEntries = [...userEntries, ...Array.from(entries)];
-            }
-        } catch (e) {
-            // Alcuni selettori potrebbero non essere supportati
-        }
-    }
-
-    // Rimuovi eventuali duplicati
-    const uniqueEntries = [];
-    const seenElements = new Set();
-
-    for (const entry of userEntries) {
-        const entryId = entry.textContent?.trim() || entry.innerHTML;
-        if (!seenElements.has(entryId)) {
-            seenElements.add(entryId);
-            uniqueEntries.push(entry);
-        }
-    }
-
-    userEntries = uniqueEntries;
-
+    // Get user entries using our helper function
+    const userEntries = findUserEntries(followingSection);
     if (userEntries.length === 0) return;
 
-    // Per ogni entry
+    // For each entry
     for (const entry of userEntries) {
-        // Rimuovi icona esistente
+        // Remove existing icon
         const existingIcon = entry.querySelector(".comment-icon-column");
         if (existingIcon) existingIcon.remove();
 
-        // Prendi nome utente
+        // Get username
         const nameElement = entry.querySelector("div[class='name']");
         if (!nameElement) continue;
 
         const username = nameElement.textContent.trim();
         const cacheKey = `${username}-${currentMediaId}`;
 
-        // Controlla cache
+        // Check cache
         if (commentCache[cacheKey]) {
             const hasComment = hasCachedComment(cacheKey);
-            const commentContent = getCachedComment(cacheKey, false);
 
-            // Aggiungi icona se c'è un commento
+            // Add icon if there's a comment
             if (hasComment) {
-                addCommentIcon(entry, username, currentMediaId, true, commentContent);
+                addCommentIcon(entry, username, currentMediaId, true);
             }
         }
     }
@@ -1794,21 +1756,18 @@ function refreshCommentIcons() {
     if (DEBUG) console.log("Comment icons refreshed successfully");
 }
 
-// Migliora il listener per i cambiamenti nello storage
+// Storage change listener
 chrome.storage.onChanged.addListener(function(changes, namespace) {
     if (namespace === 'local' && changes.commentCache) {
-        // Aggiorna la cache in memoria con i nuovi valori
-        const newCache = changes.commentCache.newValue || {};
-
-        // Aggiorna tutta la cache
-        commentCache = newCache;
+        // Update entire cache
+        commentCache = changes.commentCache.newValue || {};
 
         if (DEBUG) console.log("Cache updated from another tab");
 
-        // Aggiorna le icone di commento
+        // Update comment icons
         refreshCommentIcons();
 
-        // Aggiorna anche eventuali tooltip aperti
+        // Also update any open tooltips
         const tooltip = document.getElementById("anilist-tooltip");
         if (tooltip && tooltip.style.display === 'block') {
             const username = tooltip.getAttribute('data-username');
@@ -1851,53 +1810,89 @@ function rebuildMediaUserMap() {
     }
 }
 
-// Tooltip manager (singleton)
-const TooltipManager = (function() {
-    let instance;
-    let tooltip = null;
-    let currentElement = null;
-    let currentUsername = null;
-    let currentMediaId = null;
-    let isLoading = false;
-    let showTimer = null;
-    let hideTimer = null;
-    let isTransitioning = false;
-    let lastMouseEvent = null;
+// TooltipManager as ES6 class with better organization
+class TooltipManager {
+    static #instance = null;
+    #tooltip = null;
+    #currentElement = null;
+    #currentUsername = null;
+    #currentMediaId = null;
+    #isLoading = false;
+    #showTimer = null;
+    #hideTimer = null;
+    #isTransitioning = false;
 
     // Constants
-    const SHOW_DELAY = 150;
-    const HIDE_DELAY = 300;
-    const TRANSITION_BUFFER = 150;
+    static SHOW_DELAY = 150;
+    static HIDE_DELAY = 300;
+    static TRANSITION_BUFFER = 150;
 
-    // Get or create tooltip element
-    function getTooltip() {
-        if (!tooltip) {
-            tooltip = document.getElementById("anilist-tooltip");
-            if (!tooltip) {
-                tooltip = document.createElement("div");
-                tooltip.id = "anilist-tooltip";
-                document.body.appendChild(tooltip);
+    constructor() {
+        // Add global mouse listener
+        document.addEventListener("mousemove", this.#handleMouseMove.bind(this));
+    }
 
-                tooltip.addEventListener("mouseenter", function() {
-                    if (hideTimer) {
-                        clearTimeout(hideTimer);
-                        hideTimer = null;
+    static getInstance() {
+        if (!TooltipManager.#instance) {
+            TooltipManager.#instance = new TooltipManager();
+        }
+        return TooltipManager.#instance;
+    }
+
+    // PUBLIC METHODS
+
+    show(element, username, mediaId) {
+        this.#startShowTooltip(element, username, mediaId);
+    }
+
+    hide() {
+        this.#startHideTooltip();
+    }
+
+    forceHide() {
+        const tooltip = this.#getTooltip();
+        if (tooltip) {
+            tooltip.style.display = 'none';
+
+            // Reset all icons
+            const allIcons = document.querySelectorAll('.anilist-comment-icon');
+            allIcons.forEach(icon => {
+                icon.classList.remove('active-comment');
+            });
+        }
+        this.#currentElement = null;
+        this.#isTransitioning = false;
+    }
+
+    // Removed unused methods
+
+    // PRIVATE METHODS
+
+    #getTooltip() {
+        if (!this.#tooltip) {
+            this.#tooltip = document.getElementById("anilist-tooltip");
+            if (!this.#tooltip) {
+                this.#tooltip = document.createElement("div");
+                this.#tooltip.id = "anilist-tooltip";
+                document.body.appendChild(this.#tooltip);
+
+                this.#tooltip.addEventListener("mouseenter", () => {
+                    if (this.#hideTimer) {
+                        clearTimeout(this.#hideTimer);
+                        this.#hideTimer = null;
                     }
                 });
 
-                tooltip.addEventListener("mouseleave", function() {
-                    startHideTooltip();
+                this.#tooltip.addEventListener("mouseleave", () => {
+                    this.#startHideTooltip();
                 });
             }
         }
-        return tooltip;
+        return this.#tooltip;
     }
 
-    // Replace the existing positionTooltip function with this improved version
-    function positionTooltip(element) {
-        const tooltip = getTooltip();
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
+    #positionTooltip(element) {
+        const tooltip = this.#getTooltip();
 
         // Make tooltip visible but transparent for size calculation
         const wasHidden = tooltip.style.display === 'none';
@@ -1906,7 +1901,7 @@ const TooltipManager = (function() {
             tooltip.style.display = 'block';
         }
 
-        // Find the Following section
+        // Find Following section
         const followingSection = document.querySelector('div[class="following"], div.following, [class^="following"], [class*=" following"]');
         if (!followingSection) {
             if (wasHidden) {
@@ -1915,16 +1910,14 @@ const TooltipManager = (function() {
             return;
         }
 
-        // Get Following section dimensions and position
+        // Get Following section dimensions
         const followingRect = followingSection.getBoundingClientRect();
 
-        // HORIZONTAL POSITIONING:
-        // Always position to the right of the Following section with fixed margin
+        // HORIZONTAL POSITIONING
         const margin = 20;
         const posX = followingRect.right + margin + window.scrollX;
 
-        // VERTICAL POSITIONING:
-        // Find the parent entry (the user row being hovered)
+        // VERTICAL POSITIONING
         const parentEntry = element.closest('a');
         if (!parentEntry) {
             if (wasHidden) {
@@ -1933,16 +1926,8 @@ const TooltipManager = (function() {
             return;
         }
 
-        // Get precise coordinates of the parent entry
         const parentRect = parentEntry.getBoundingClientRect();
-
-        // Align the top of the tooltip with the top of the entry
-        // This ensures the tooltip starts exactly at the entry's vertical position
         const posY = window.scrollY + parentRect.top;
-
-        // Set fixed maximum height for the tooltip to ensure it doesn't grow too large
-        tooltip.style.maxHeight = '500px'; // Increased height before scrolling appears
-        tooltip.style.overflowY = 'auto';  // Enable scrolling for long comments
 
         // Mark hover state
         const allIcons = document.querySelectorAll('.anilist-comment-icon');
@@ -1952,12 +1937,12 @@ const TooltipManager = (function() {
             hoveredIcon.classList.add('active-comment');
         }
 
-        // Set tooltip position with no transition for immediate positioning
+        // Set tooltip position
         tooltip.style.transition = "none";
         tooltip.style.left = posX + 'px';
         tooltip.style.top = posY + 'px';
 
-        // Re-enable transitions after positioning
+        // Re-enable transitions
         setTimeout(() => {
             tooltip.style.transition = "opacity 0.2s ease";
         }, 50);
@@ -1967,157 +1952,123 @@ const TooltipManager = (function() {
         }
     }
 
-    // Start showing tooltip
-    function startShowTooltip(element, username, mediaId) {
+    async #startShowTooltip(element, username, mediaId) {
         // Cancel hide timer
-        if (hideTimer) {
-            clearTimeout(hideTimer);
-            hideTimer = null;
+        if (this.#hideTimer) {
+            clearTimeout(this.#hideTimer);
+            this.#hideTimer = null;
         }
 
         // Already showing for this element
-        if (currentElement === element && tooltip && tooltip.style.display === 'block') {
+        if (this.#currentElement === element && this.#tooltip && this.#tooltip.style.display === 'block') {
             return;
         }
 
         // Transition between elements
-        if (currentElement && currentElement !== element && tooltip && tooltip.style.display === 'block') {
-            isTransitioning = true;
+        if (this.#currentElement && this.#currentElement !== element && this.#tooltip && this.#tooltip.style.display === 'block') {
+            this.#isTransitioning = true;
 
-            if (showTimer) {
-                clearTimeout(showTimer);
+            if (this.#showTimer) {
+                clearTimeout(this.#showTimer);
             }
 
-            currentElement = element;
-            currentUsername = username;
-            currentMediaId = mediaId;
+            this.#currentElement = element;
+            this.#currentUsername = username;
+            this.#currentMediaId = mediaId;
 
-            positionTooltip(element);
-            updateTooltipContent("Loading...");
-            loadComment(username, mediaId);
+            this.#positionTooltip(element);
+            this.#tooltip.innerHTML = "<div class='tooltip-loading'>Loading...</div>";
+            await this.#loadComment(username, mediaId);
             return;
         }
 
         // Start show timer
-        if (!showTimer) {
-            showTimer = setTimeout(() => {
-                currentElement = element;
-                currentUsername = username;
-                currentMediaId = mediaId;
+        if (!this.#showTimer) {
+            this.#showTimer = setTimeout(() => {
+                this.#currentElement = element;
+                this.#currentUsername = username;
+                this.#currentMediaId = mediaId;
 
-                const tooltip = getTooltip();
+                const tooltip = this.#getTooltip();
                 tooltip.style.display = 'block';
 
-                positionTooltip(element);
-                updateTooltipContent("Loading...");
-                loadComment(username, mediaId);
+                this.#positionTooltip(element);
+                tooltip.innerHTML = "<div class='tooltip-loading'>Loading...</div>";
+                this.#loadComment(username, mediaId);
 
-                showTimer = null;
-                isTransitioning = false;
-            }, SHOW_DELAY);
+                this.#showTimer = null;
+                this.#isTransitioning = false;
+            }, TooltipManager.SHOW_DELAY);
         }
     }
 
-    // Start hiding tooltip
-    function startHideTooltip() {
-        if (isTransitioning) {
+    #startHideTooltip() {
+        if (this.#isTransitioning) {
             setTimeout(() => {
-                isTransitioning = false;
-            }, TRANSITION_BUFFER);
+                this.#isTransitioning = false;
+            }, TooltipManager.TRANSITION_BUFFER);
             return;
         }
 
-        if (showTimer) {
-            clearTimeout(showTimer);
-            showTimer = null;
+        if (this.#showTimer) {
+            clearTimeout(this.#showTimer);
+            this.#showTimer = null;
         }
 
-        if (!hideTimer && tooltip && tooltip.style.display === 'block') {
-            hideTimer = setTimeout(() => {
-                hideTooltip();
-                hideTimer = null;
-            }, HIDE_DELAY);
+        if (!this.#hideTimer && this.#tooltip && this.#tooltip.style.display === 'block') {
+            this.#hideTimer = setTimeout(() => {
+                this.#hideTooltip();
+                this.#hideTimer = null;
+            }, TooltipManager.HIDE_DELAY);
         }
     }
 
-    // Hide tooltip immediately
-    function hideTooltip() {
-        if (tooltip) {
-            tooltip.style.display = 'none';
+    #hideTooltip() {
+        if (this.#tooltip) {
+            this.#tooltip.style.display = 'none';
 
-            // Ripristina tutte le icone allo stato predefinito
+            // Reset all icons
             const allIcons = document.querySelectorAll('.anilist-comment-icon');
             allIcons.forEach(icon => {
                 icon.classList.remove('active-comment');
             });
         }
-        currentElement = null;
-        isTransitioning = false;
+        this.#currentElement = null;
+        this.#isTransitioning = false;
     }
 
-    // Update tooltip content
-    function updateTooltipContent(content) {
-        const tooltip = getTooltip();
-
-        if (content === "Loading...") {
-            tooltip.innerHTML = "<div class='tooltip-loading'>Loading...</div>";
-            return;
-        }
-
-        // Use external function
-        if (window.updateTooltipContent && typeof window.updateTooltipContent === 'function') {
-            window.updateTooltipContent(tooltip, content, currentUsername, currentMediaId);
-        } else {
-            // Fallback
-            tooltip.textContent = "";
-
-            if (content && content.trim() !== "") {
-                const commentDiv = document.createElement("div");
-                commentDiv.className = "comment";
-                commentDiv.textContent = content;
-                tooltip.appendChild(commentDiv);
-            } else {
-                const noCommentDiv = document.createElement("div");
-                noCommentDiv.className = "no-comment";
-                noCommentDiv.textContent = "No comment";
-                tooltip.appendChild(noCommentDiv);
-            }
-        }
-    }
-
-    // Load comment from cache or API
-    async function loadComment(username, mediaId) {
-        isLoading = true;
+    async #loadComment(username, mediaId) {
+        this.#isLoading = true;
 
         // Cache key
-        const cacheKey = `${username}-${mediaId}`;
+        const reqCacheKey = `${username}-${mediaId}`;
 
         // Try cache first
         let comment = null;
         let cacheIsValid = false;
         const now = Date.now();
 
-        if (commentCache[cacheKey]) {
-            if (typeof commentCache[cacheKey] === 'object' && commentCache[cacheKey].content) {
-                comment = commentCache[cacheKey].content;
+        if (commentCache[reqCacheKey]) {
+            if (typeof commentCache[reqCacheKey] === 'object' && commentCache[reqCacheKey].content) {
+                comment = commentCache[reqCacheKey].content;
 
                 // Check if still valid
-                if (commentCache[cacheKey].timestamp &&
-                    (now - commentCache[cacheKey].timestamp) < CACHE_MAX_AGE) {
+                if (commentCache[reqCacheKey].timestamp &&
+                    (now - commentCache[reqCacheKey].timestamp) < CACHE_MAX_AGE) {
                     cacheIsValid = true;
                 }
-            } else if (typeof commentCache[cacheKey] === 'string' &&
-                commentCache[cacheKey] !== "__has_comment__") {
-                comment = commentCache[cacheKey];
+            } else if (typeof commentCache[reqCacheKey] === 'string' &&
+                commentCache[reqCacheKey] !== "__has_comment__") {
+                comment = commentCache[reqCacheKey];
             }
 
             // Show cached content
             if (comment) {
-                updateTooltipContent(comment);
+                window.updateTooltipContent(this.#tooltip, comment, username, mediaId);
 
                 // Skip API if valid or rate limited
                 if (cacheIsValid || isRateLimited) {
-                    isLoading = false;
+                    this.#isLoading = false;
                     return;
                 }
             }
@@ -2140,7 +2091,8 @@ const TooltipManager = (function() {
                     comment = await fetchUserComment(username, mediaId);
 
                     // Update cache
-                    commentCache[cacheKey] = {
+                    const newCacheKey = `${username}-${mediaId}`;
+                    commentCache[newCacheKey] = {
                         content: comment || '',
                         timestamp: Date.now()
                     };
@@ -2148,12 +2100,12 @@ const TooltipManager = (function() {
                     saveCache();
 
                     // Update if still current
-                    if (currentUsername === username && currentMediaId === mediaId) {
-                        updateTooltipContent(comment);
+                    if (this.#currentUsername === username && this.#currentMediaId === mediaId) {
+                        window.updateTooltipContent(this.#tooltip, comment, username, mediaId);
                     }
                 } else {
                     // Rate limited
-                    updateTooltipContent("Rate limit reached. Try again later.");
+                    this.#tooltip.innerHTML = "<div class='tooltip-error'>Rate limit reached. Try again later.</div>";
                     isRateLimited = true;
 
                     setTimeout(() => {
@@ -2163,21 +2115,20 @@ const TooltipManager = (function() {
                 }
             } catch (error) {
                 // Error loading
-                if (currentUsername === username && currentMediaId === mediaId) {
-                    updateTooltipContent("Error loading comment");
+                if (this.#currentUsername === username && this.#currentMediaId === mediaId) {
+                    this.#tooltip.innerHTML = "<div class='tooltip-error'>Error loading comment</div>";
                 }
                 console.error("API request error:", error);
             }
         } else {
             // Already rate limited
-            updateTooltipContent("API rate limit reached. Try again later.");
+            this.#tooltip.innerHTML = "<div class='tooltip-error'>API rate limit reached. Try again later.</div>";
         }
 
-        isLoading = false;
+        this.#isLoading = false;
     }
 
-    // Check if point is near rect
-    function isNear(point, rect, tolerance) {
+    #isNear(point, rect, tolerance) {
         return (
             point.x >= rect.left - tolerance &&
             point.x <= rect.right + tolerance &&
@@ -2186,8 +2137,7 @@ const TooltipManager = (function() {
         );
     }
 
-    // Check if point is in path between points
-    function isInPath(px, py, x1, y1, x2, y2, width) {
+    #isInPath(px, py, x1, y1, x2, y2, width) {
         // Calculate distance to line
         const A = px - x1;
         const B = py - y1;
@@ -2197,13 +2147,12 @@ const TooltipManager = (function() {
         const dot = A * C + B * D;
         const len_sq = C * C + D * D;
 
-        // Parameter on line
         let param = -1;
-        if (len_sq != 0) param = dot / len_sq;
+        if (len_sq !== 0) param = dot / len_sq;
 
         let xx, yy;
 
-        // Find closest point
+        // Find the closest point
         if (param < 0) {
             xx = x1;
             yy = y1;
@@ -2223,114 +2172,15 @@ const TooltipManager = (function() {
         return distance < width;
     }
 
-    // Mouse move handler
-    function handleMouseMove(e) {
-        // Save event
-        lastMouseEvent = { x: e.clientX, y: e.clientY };
-
-        // Skip if no active tooltip
-        if (!tooltip || tooltip.style.display !== 'block' || !currentElement) {
-            return;
-        }
-
-        const elementRect = currentElement.getBoundingClientRect();
-        const tooltipRect = tooltip.getBoundingClientRect();
-
-        // Tolerance
-        const tolerance = 25;
-
-        // Check proximity
-        const isNearElement = isNear(
-            { x: e.clientX, y: e.clientY },
-            elementRect,
-            tolerance
-        );
-
-        const isNearTooltip = isNear(
-            { x: e.clientX, y: e.clientY },
-            tooltipRect,
-            tolerance
-        );
-
-        // Check corridor
-        const isInCorridor = isInPath(
-            e.clientX, e.clientY,
-            (elementRect.left + elementRect.right) / 2,
-            (elementRect.top + elementRect.bottom) / 2,
-            (tooltipRect.left + tooltipRect.right) / 2,
-            (tooltipRect.top + tooltipRect.bottom) / 2,
-            tolerance * 2.5
-        );
-
-        // Check other icons
-        const isNearAnotherIcon = isNearAnyCommentIcon(e.clientX, e.clientY);
-
-        // Keep visible in safe area
-        if (isNearElement || isNearTooltip || isInCorridor || isNearAnotherIcon) {
-            if (hideTimer) {
-                clearTimeout(hideTimer);
-                hideTimer = null;
-            }
-
-            // Set transition
-            if (isNearAnotherIcon && !isNearElement && !isNearTooltip) {
-                isTransitioning = true;
-            }
-        } else {
-            // Start hiding
-            startHideTooltip();
-
-            // IMPORTANT: Reset icon states when not near any relevant elements
-            if (!isNearElement && !isNearTooltip && !isInCorridor && !isNearAnotherIcon) {
-                const allIcons = document.querySelectorAll('.anilist-comment-icon');
-                allIcons.forEach(icon => {
-                    if (!icon.parentElement || !icon.parentElement.matches(':hover')) {
-                        icon.classList.remove('active-comment');
-                    }
-                });
-            }
-        }
-    }
-
-    window.addEventListener('resize', debounce(() => {
-        // Reposition any visible tooltip
-        const tooltip = document.getElementById("anilist-tooltip");
-        if (tooltip && tooltip.style.display === 'block') {
-            const tooltipManager = TooltipManager.getInstance();
-            const currentElement = document.querySelector('.anilist-comment-icon.active-comment')?.closest('.comment-icon-column');
-
-            if (currentElement) {
-                // Reset position based on new window dimensions
-                positionTooltip(currentElement);
-            } else {
-                // Hide tooltip if we can't find the related element
-                tooltipManager.forceHide();
-            }
-        }
-    }, 100));
-
-    window.addEventListener('beforeunload', () => {
-        if (observer) {
-            observer.disconnect();
-        }
-        if (globalObserver) {
-            globalObserver.disconnect();
-        }
-        if (urlObserver) {
-            urlObserver.disconnect();
-        }
-    });
-
-    // Check if near any comment icon
-    function isNearAnyCommentIcon(x, y) {
-        if (!currentElement) return false;
+    #isNearAnyCommentIcon(x, y) {
+        if (!this.#currentElement) return false;
 
         const tolerance = 35;
         const icons = document.querySelectorAll(".anilist-comment-icon");
 
         for (const icon of icons) {
             // Skip current
-            if (icon.closest(".comment-icon-column") === currentElement) continue;
+            if (icon.closest(".comment-icon-column") === this.#currentElement) continue;
 
             const rect = icon.getBoundingClientRect();
             if (
@@ -2346,142 +2196,85 @@ const TooltipManager = (function() {
         return false;
     }
 
-    // Initialize
-    function init() {
-        // Add global mouse listener
-        document.addEventListener("mousemove", handleMouseMove);
-
-        return {
-            // Show tooltip
-            show: function(element, username, mediaId) {
-                startShowTooltip(element, username, mediaId);
-            },
-
-            // Start hiding
-            hide: function() {
-                startHideTooltip();
-            },
-
-            // Force hide
-            forceHide: function() {
-                hideTooltip();
-            },
-
-            // Refresh content
-            refreshContent: async function() {
-                if (!currentUsername || !currentMediaId) return;
-
-                updateTooltipContent("Loading...");
-
-                try {
-                    const comment = await fetchUserComment(currentUsername, currentMediaId);
-
-                    // Update cache
-                    const cacheKey = `${currentUsername}-${currentMediaId}`;
-                    commentCache[cacheKey] = {
-                        content: comment || '',
-                        timestamp: Date.now()
-                    };
-
-                    saveCache();
-                    updateTooltipContent(comment);
-                } catch (error) {
-                    console.error("Error refreshing tooltip content:", error);
-                    updateTooltipContent("Error refreshing content");
-                }
-            },
-
-            // Cleanup
-            cleanup: function() {
-                document.removeEventListener("mousemove", handleMouseMove);
-
-                if (showTimer) {
-                    clearTimeout(showTimer);
-                    showTimer = null;
-                }
-
-                if (hideTimer) {
-                    clearTimeout(hideTimer);
-                    hideTimer = null;
-                }
-
-                if (tooltip) {
-                    tooltip.remove();
-                    tooltip = null;
-                }
-
-                currentElement = null;
-                isTransitioning = false;
-            }
-        };
-    }
-
-    // Return singleton
-    return {
-        getInstance: function() {
-            if (!instance) {
-                instance = init();
-            }
-            return instance;
+    #handleMouseMove(e) {
+        // Skip if no active tooltip
+        if (!this.#tooltip || this.#tooltip.style.display !== 'block' || !this.#currentElement) {
+            return;
         }
-    };
 
-    return {
-        // Show tooltip
-        show: function(element, username, mediaId) {
-            startShowTooltip(element, username, mediaId);
-        },
+        const elementRect = this.#currentElement.getBoundingClientRect();
+        const tooltipRect = this.#tooltip.getBoundingClientRect();
 
-        // Start hiding
-        hide: function() {
-            startHideTooltip();
-        },
+        // Tolerance
+        const tolerance = 25;
 
-        // Force hide
-        forceHide: function() {
-            if (tooltip) {
-                tooltip.style.display = 'none';
+        // Check proximity
+        const isNearElement = this.#isNear(
+            { x: e.clientX, y: e.clientY },
+            elementRect,
+            tolerance
+        );
 
-                // Reset all icons to default state
+        const isNearTooltip = this.#isNear(
+            { x: e.clientX, y: e.clientY },
+            tooltipRect,
+            tolerance
+        );
+
+        // Check corridor
+        const isInCorridor = this.#isInPath(
+            e.clientX, e.clientY,
+            (elementRect.left + elementRect.right) / 2,
+            (elementRect.top + elementRect.bottom) / 2,
+            (tooltipRect.left + tooltipRect.right) / 2,
+            (tooltipRect.top + tooltipRect.bottom) / 2,
+            tolerance * 2.5
+        );
+
+        // Check other icons
+        const isNearAnotherIcon = this.#isNearAnyCommentIcon(e.clientX, e.clientY);
+
+        // Keep visible in safe area
+        if (isNearElement || isNearTooltip || isInCorridor || isNearAnotherIcon) {
+            if (this.#hideTimer) {
+                clearTimeout(this.#hideTimer);
+                this.#hideTimer = null;
+            }
+
+            // Set transition
+            if (isNearAnotherIcon && !isNearElement && !isNearTooltip) {
+                this.#isTransitioning = true;
+            }
+        } else {
+            // Start hiding
+            this.#startHideTooltip();
+
+            // Reset icon states when not near any relevant elements
+            if (!isNearElement && !isNearTooltip && !isInCorridor && !isNearAnotherIcon) {
                 const allIcons = document.querySelectorAll('.anilist-comment-icon');
                 allIcons.forEach(icon => {
-                    icon.classList.remove('active-comment');
-                    icon.style.color = "";
-                    icon.style.opacity = "";
-                    icon.style.transform = "";
-                    icon.style.filter = "";
+                    if (!icon.parentElement || !icon.parentElement.matches(':hover')) {
+                        icon.classList.remove('active-comment');
+                    }
                 });
             }
-            currentElement = null;
-            isTransitioning = false;
-        },
-
-        // Refresh content
-        refreshContent: async function() {
-            // existing refresh code
-        },
-
-        // Cleanup
-        cleanup: function() {
-            // existing cleanup code
         }
-    };
-})();
+    }
+}
 
 // Setup hover listener
-function setupHoverListener(element, username, mediaId, cachedComment = null) {
+function setupHoverListener(element, username, mediaId) {
     const tooltipManager = TooltipManager.getInstance();
     const commentIcon = element.querySelector(".anilist-comment-icon");
 
-    // Get the parent entry row (the <a> element)
+    // Get the parent entry row
     const parentRow = element.closest("a");
 
     if (parentRow) {
         // Handle row hover state
         parentRow.addEventListener("mouseenter", () => {
             if (commentIcon) {
-                commentIcon.style.color = "#3db4f2";
-                commentIcon.style.opacity = "1";
+                commentIcon.classList.add('hover-active');
             }
         });
 
@@ -2518,7 +2311,7 @@ function setupHoverListener(element, username, mediaId, cachedComment = null) {
         }, 50);
     });
 
-    // Return cleanup function
+    // Return cleanup function for potential future use
     return function cleanup() {
         if (parentRow) {
             parentRow.removeEventListener("mouseenter", () => {});
@@ -2536,27 +2329,32 @@ function resetIconState(icon) {
 
     // Remove active class
     icon.classList.remove('active-comment');
-
-    // Reset inline styles
-    icon.style.color = "";
-    icon.style.opacity = "";
-    icon.style.transform = "";
-    icon.style.filter = "";
+    icon.classList.remove('hover-active');
 }
 
-function forceHide() {
-    hideTooltip();
-    resetCommentIconStates(); // Make sure all icons reset
-}
+// Window resize handler
+window.addEventListener('resize', debounce(() => {
+    // Reposition any visible tooltip
+    const tooltip = document.getElementById("anilist-tooltip");
+    if (tooltip && tooltip.style.display === 'block') {
+        const tooltipManager = TooltipManager.getInstance();
+        const currentElement = document.querySelector('.anilist-comment-icon.active-comment')?.closest('.comment-icon-column');
 
-function resetCommentIconStates() {
-    const allIcons = document.querySelectorAll('.anilist-comment-icon');
-    allIcons.forEach(icon => {
-        resetIconState(icon);
-    });
-}
+        if (currentElement) {
+            // Force repositioning
+            tooltipManager.forceHide();
+            tooltipManager.show(currentElement,
+                tooltip.getAttribute('data-username'),
+                parseInt(tooltip.getAttribute('data-media-id'))
+            );
+        } else {
+            // Hide tooltip if we can't find the related element
+            tooltipManager.forceHide();
+        }
+    }
+}, 100));
 
-// Handle unload
+// Handle page unload
 window.addEventListener("unload", () => {
     // Cancel pending actions
     pendingRequests = [];
@@ -2571,7 +2369,7 @@ window.addEventListener("unload", () => {
         urlObserver.disconnect();
     }
 
-    // Stop timer
+    // Stop timers
     if (cacheCleanupTimer) {
         clearInterval(cacheCleanupTimer);
     }
@@ -2580,7 +2378,7 @@ window.addEventListener("unload", () => {
         clearInterval(periodicCheckTimer);
     }
 
-    // Save one last time
+    // Save cache one last time
     if (isExtensionContextValid() && Object.keys(commentCache).length > 0) {
         try {
             chrome.storage.local.set({ commentCache });
@@ -2620,92 +2418,110 @@ function detectCurrentUsername() {
     }, 2000);
 }
 
-// Detect when an anime/manga is saved in order to apply a comment if it exists
-// Create a MutationObserver to detect changes in the DOM
-const observer = new MutationObserver(mutations => {
-    mutations.forEach(mutation => {
-        // We only care about added nodes (childList) or attribute changes (attributes)
-        if (mutation.type === 'childList' || mutation.type === 'attributes') {
-            // Try to find the "Save" button in the DOM
-            const saveButton = document.querySelector('.save-btn');
+// Listen for anime/manga save events
+function setupSaveEventObserver() {
+    const observer = new MutationObserver(mutations => {
+        mutations.forEach(mutation => {
+            // Check for added nodes or attribute changes
+            if (mutation.type === 'childList' || mutation.type === 'attributes') {
+                // Try to find the "Save" button
+                const saveButton = document.querySelector('.save-btn');
 
-            // Check if the button exists and ensure the event listener hasn't been added already
-            if (saveButton && !saveButton.dataset.listenerAdded) {
-                saveButton.dataset.listenerAdded = "true"; // Mark the button to prevent duplicate listeners
+                // Check if button exists and event listener hasn't been added
+                if (saveButton && !saveButton.dataset.listenerAdded) {
+                    saveButton.dataset.listenerAdded = "true"; // Prevent duplicate listeners
 
-                // Add a click event listener to detect when the "Save" button is pressed
-                saveButton.addEventListener('click', function(event) {
-                    console.log('Anime save state confirmed:', this.textContent.trim());
-                });
+                    // Add click event listener
+                    saveButton.addEventListener('click', function() {
+                        if (DEBUG) console.log('Anime/manga save detected');
+
+                        // Refresh current user comment after a delay
+                        setTimeout(() => {
+                            const mediaInfo = extractMediaIdFromUrl();
+                            if (mediaInfo && currentUsername) {
+                                queueApiRequest({
+                                    type: 'checkComment',
+                                    username: currentUsername,
+                                    mediaId: mediaInfo.id,
+                                    priority: 1
+                                });
+                                startProcessingRequests();
+                            }
+                        }, 2000);
+                    });
+                }
             }
-        }
+        });
     });
-});
 
-// Select the target node where changes occur (body includes all elements)
-const targetNode = document.body;
+    // Configure and start the observer
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true
+    });
 
-// Define observer configuration:
-// - childList: Detects when elements are added or removed
-// - subtree: Monitors all child elements (not just direct children)
-// - attributes: Detects changes in attributes (useful for dynamic updates)
-const config = { childList: true, subtree: true, attributes: true };
+    return observer;
+}
 
-// Start observing the document
-observer.observe(targetNode, config);
+// Main Initialization
+function initOnLoad() {
+    // Load Font Awesome
+    loadFontAwesome();
 
+    // Detect username
+    detectCurrentUsername();
 
-// INITIALIZATION
-// Load font awesome
-loadFontAwesome();
+    // Setup URL observer
+    urlObserver = setupUrlObserver();
 
-// Detect username
-detectCurrentUsername();
+    // Setup navigation listeners
+    setupNavigationListeners();
 
-// Setup URL observer
-urlObserver = setupUrlObserver();
+    // Load cache and initialize
+    loadCacheAndInitialize();
 
-// Setup navigation listeners
-setupNavigationListeners();
+    // Setup save event observer
+    setupSaveEventObserver();
+}
 
-// DOMContentLoaded listener
-document.addEventListener('DOMContentLoaded', () => {
-    if (isExtensionContextValid()) {
-        console.log("Content script loaded, starting extension");
-        loadCacheAndInitialize();
-    }
-});
-
-// Implementa un meccanismo di "Early initialization" migliorato
-// Questo aiuta con SPA (Single Page Applications) come Anilist
+// Early initialization
 function attemptEarlyInitialization() {
     if (document.readyState === 'loading') {
-        // Il documento è ancora in caricamento, aspettiamo l'evento DOMContentLoaded
+        // Document still loading, wait for DOMContentLoaded
         console.log("Document still loading, waiting for DOMContentLoaded event");
         return;
     }
 
-    // Il documento è già caricato, possiamo inizializzare immediatamente
+    // Document already loaded, initialize immediately
     console.log("Document already loaded, initializing immediately");
 
     if (isExtensionContextValid()) {
-        // Prima verifica se siamo già su una pagina anime/manga
+        // Check if already on anime/manga page
         const mediaInfo = extractMediaIdFromUrl();
         if (mediaInfo) {
             console.log(`Already on a media page (ID: ${mediaInfo.id}), initializing extension`);
             loadCacheAndInitialize();
         } else {
-            // Comunque, configuriamo l'osservatore URL nel caso l'utente navighi a una pagina pertinente
+            // Setup URL observer for navigation
             console.log("Not on a media page, setting up URL observer only");
             urlObserver = setupUrlObserver();
         }
     }
 }
 
+// DOMContentLoaded listener
+document.addEventListener('DOMContentLoaded', () => {
+    if (isExtensionContextValid()) {
+        console.log("Content script loaded, starting extension");
+        initOnLoad();
+    }
+});
+
 // Start immediately if already loaded
 attemptEarlyInitialization();
 
-// Retry initialization after a short delay to handle pages that load content dynamically
+// Retry after a short delay for dynamically loaded content
 setTimeout(() => {
     const mediaInfo = extractMediaIdFromUrl();
     if (mediaInfo && !isInitialized) {
@@ -2714,13 +2530,12 @@ setTimeout(() => {
     }
 }, 1500);
 
-// Ultima rete di sicurezza: polling periodico per controllare la navigazione
-// Questo è necessario perché alcuni eventi di navigazione potrebbero non essere catturati dai metodi standard
+// Periodic check for SPA navigation that might be missed
 setInterval(() => {
     if (isExtensionContextValid()) {
         handleUrlChange();
 
-        // Se siamo su una pagina pertinente ma non ancora inizializzata, riprova
+        // Retry initialization if needed
         const mediaInfo = extractMediaIdFromUrl();
         if (mediaInfo && !isInitialized) {
             console.log("Periodic check found uninitialized media page, retrying");
