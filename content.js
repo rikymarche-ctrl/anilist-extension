@@ -3,6 +3,8 @@
  *
  * This script identifies user comments on Anilist anime/manga pages and displays
  * an icon that shows comments when hovered over.
+ *
+ * GitHub: https://github.com/rikymarche-ctrl/anilist-extension
  */
 console.log("Anilist Hover Comments: Loaded!");
 
@@ -48,6 +50,9 @@ function initialize() {
 
     // Reset state
     resetState();
+
+    // Forza il caricamento della cache
+    loadCacheFromStorage();
 
     // Find the following section
     findFollowingSection(media.id);
@@ -108,7 +113,7 @@ function findFollowingSection(mediaId) {
 
     if (userLinks.length === 0) return;
 
-    // Process each user - now with batched API requests
+    // Process each user
     let processedCount = 0;
 
     userLinks.forEach(link => {
@@ -116,7 +121,6 @@ function findFollowingSection(mediaId) {
         if (!href) return;
 
         const username = href.replace('/user/', '').replace(/\/$/, '');
-        console.log(`Processing user: ${username}`);
 
         checkUserComment(link, username, mediaId);
         processedCount++;
@@ -188,21 +192,27 @@ async function checkUserComment(entry, username, mediaId) {
     const cacheKey = `${username}-${mediaId}`;
 
     // Check cache first
+    let foundInCache = false;
+    let hasComment = false;
+
     if (commentCache[cacheKey]) {
         const cache = commentCache[cacheKey];
         const now = Date.now();
 
-        // If cache still valid
+        // If cache still valid, check if there's a comment
         if (cache.timestamp && (now - cache.timestamp) < CACHE_MAX_AGE) {
+            foundInCache = true;
             if (cache.content && cache.content.trim() !== '') {
+                hasComment = true;
                 addCommentIcon(entry, username, mediaId);
             }
-            return;
         }
     }
 
-    // Queue API request to avoid rate limiting
-    queueApiRequest(entry, username, mediaId);
+    // Se non abbiamo trovato nella cache, o la cache è scaduta, fai richiesta API
+    if (!foundInCache) {
+        queueApiRequest(entry, username, mediaId);
+    }
 }
 
 // Queue API requests to control request rate
@@ -236,7 +246,6 @@ async function processApiQueue() {
         }
 
         if (requestsInLastMinute >= MAX_REQUESTS_PER_MINUTE) {
-            console.log("Rate limit reached, pausing requests");
             isRateLimited = true;
 
             // Requeue the current request
@@ -263,10 +272,10 @@ async function processApiQueue() {
             timestamp: Date.now()
         };
 
-        // Add icon if comment present
-        if (comment && comment.trim() !== '') {
-            addCommentIcon(request.entry, request.username, request.mediaId);
-        }
+        // Importante: Aggiungi SEMPRE l'icona, anche se il commento è vuoto
+        // Questo risolve il problema quando il commento non c'è ma dovremmo comunque
+        // permettere l'interazione con l'icona
+        addCommentIcon(request.entry, request.username, request.mediaId);
 
         // Save cache periodically
         if (Object.keys(commentCache).length % 5 === 0) {
@@ -277,7 +286,7 @@ async function processApiQueue() {
         setTimeout(processApiQueue, BATCH_DELAY);
 
     } catch (error) {
-        console.error(`Error processing request for ${request.username}:`, error);
+        // Process next request after delay, senza loggare errori
         setTimeout(processApiQueue, BATCH_DELAY);
     }
 }
@@ -289,39 +298,11 @@ function addCommentIcon(entry, username, mediaId) {
         return;
     }
 
-    // Find status and rating elements to position the icon between them
-    let statusElement = null;
-    let scoreElement = null;
-    const children = Array.from(entry.children || []);
-
-    // Examine each child to identify status and score
-    for (const child of children) {
-        const text = child.textContent?.trim() || '';
-        const classList = child.className || '';
-
-        // Status detection (Completed, Watching, etc.)
-        if (
-            /completed|watching|dropped|plan|hold/i.test(text) ||
-            /status/i.test(classList) ||
-            child.querySelector('[class*="status"]')
-        ) {
-            statusElement = child;
-        }
-
-        // Score detection (numbers with slashes like 8/10 or 7.5/10)
-        if (
-            /\d+(\.\d+)?\/\d+/.test(text) ||
-            /score|rating/i.test(classList) ||
-            child.querySelector('[class*="score"]') ||
-            child.querySelector('[class*="rating"]')
-        ) {
-            scoreElement = child;
-        }
-    }
-
     // Create icon container
     const iconCol = document.createElement('div');
     iconCol.className = 'comment-icon-column';
+    iconCol.dataset.username = username;
+    iconCol.dataset.mediaId = mediaId;
 
     // Create icon
     const commentIcon = document.createElement('i');
@@ -330,9 +311,7 @@ function addCommentIcon(entry, username, mediaId) {
 
     // Position the icon container absolutely within the entry
     entry.style.position = 'relative';
-
-    // Use a fixed position that's further to the left
-    iconCol.style.right = '100px';  // Moved further left (more distance from right edge)
+    iconCol.style.right = '100px';  // Moved further left
 
     // Append to entry
     entry.appendChild(iconCol);
@@ -356,14 +335,14 @@ class TooltipManager {
         this.tooltip = null;
         this.hideTimer = null;
         this.currentElement = null;
+        this.currentUsername = null;
+        this.currentMediaId = null;
 
         // Add global mouse move listener
         document.addEventListener('mousemove', this.handleMouseMove.bind(this));
     }
 
     show(element, username, mediaId) {
-        console.log(`Showing tooltip for ${username}`);
-
         // Remove active class from ALL icons first to fix highlighting persistence
         document.querySelectorAll('.anilist-comment-icon').forEach(icon => {
             icon.classList.remove('active-comment');
@@ -376,6 +355,8 @@ class TooltipManager {
         }
 
         this.currentElement = element;
+        this.currentUsername = username;
+        this.currentMediaId = mediaId;
 
         // Get or create tooltip
         const tooltip = this.getTooltip();
@@ -423,6 +404,8 @@ class TooltipManager {
                     });
 
                     this.currentElement = null;
+                    this.currentUsername = null;
+                    this.currentMediaId = null;
                     this.hideTimer = null;
                 }, 300); // Match the CSS transition time
             }
@@ -507,8 +490,9 @@ class TooltipManager {
         let cacheIsValid = false;
         const now = Date.now();
 
+        // Tentativo di caricamento dalla cache
         if (commentCache[cacheKey]) {
-            if (typeof commentCache[cacheKey] === 'object' && commentCache[cacheKey].content) {
+            if (typeof commentCache[cacheKey] === 'object' && commentCache[cacheKey].content !== undefined) {
                 comment = commentCache[cacheKey].content;
 
                 // Check if valid
@@ -536,7 +520,7 @@ class TooltipManager {
                 if (requestsInLastMinute < MAX_REQUESTS_PER_MINUTE) {
                     requestsInLastMinute++;
 
-                    // Fetch new comment
+                    // Fetch fresh comment
                     const freshComment = await fetchUserComment(username, mediaId);
 
                     // Update cache
@@ -567,8 +551,6 @@ class TooltipManager {
                     }
                 }
             } catch (error) {
-                console.error("Error loading comment:", error);
-
                 // Show error in tooltip
                 if (this.tooltip) {
                     this.tooltip.innerHTML += `
@@ -618,8 +600,8 @@ class TooltipManager {
         let cacheAge = null;
         const cacheKey = `${username}-${mediaId}`;
 
-        if (commentCache[cacheKey]) {
-            if (typeof commentCache[cacheKey] === 'object' && commentCache[cacheKey].timestamp) {
+        if (commentCache[cacheKey] && typeof commentCache[cacheKey] === 'object') {
+            if (commentCache[cacheKey].timestamp) {
                 cacheDate = new Date(commentCache[cacheKey].timestamp);
                 const now = Date.now();
                 cacheAge = now - commentCache[cacheKey].timestamp;
@@ -701,8 +683,6 @@ class TooltipManager {
                     refreshButton.disabled = false;
                 }, 2000);
             } catch (error) {
-                console.error("Error refreshing comment:", error);
-
                 // Error handling
                 refreshButton.innerHTML = '<i class="fa-solid fa-exclamation-circle"></i> Error';
                 refreshButton.classList.add('error');
@@ -787,12 +767,13 @@ function setupHoverListener(element, username, mediaId) {
     // Icon specific hover (for the animation effect)
     element.addEventListener("mouseenter", (e) => {
         e.stopPropagation();
-        tooltipManager.show(element, username, mediaId);
+        // Usare un timeout più breve ma comunque garantire che il tooltip si apra
+        setTimeout(() => tooltipManager.show(element, username, mediaId), 5);
     });
 
     element.addEventListener("mouseleave", (e) => {
         e.stopPropagation();
-        // Small delay to prevent flickering
+        // Piccolo delay per evitare flickering
         setTimeout(() => {
             tooltipManager.hide();
         }, 50);
@@ -831,10 +812,8 @@ function getTimeAgo(date) {
     }
 }
 
-// Anilist API - with better error handling and retry
+// Fetch user comment - utilizzato per la scansione iniziale
 async function fetchUserComment(username, mediaId) {
-    console.log(`Fetching comment for ${username}, media ${mediaId}`);
-
     const query = `
         query ($userName: String, $mediaId: Int) {
             MediaList(userName: $userName, mediaId: $mediaId) {
@@ -845,91 +824,41 @@ async function fetchUserComment(username, mediaId) {
 
     const variables = { userName: username, mediaId: parseInt(mediaId) };
 
-    // Implementation with automatic retry
-    const maxRetries = 2;
-    const initialDelay = 1000; // 1 second
+    try {
+        const response = await fetch("https://graphql.anilist.co", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            body: JSON.stringify({ query, variables })
+        });
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-            // Wait if it's a retry
-            if (attempt > 0) {
-                const delay = initialDelay * Math.pow(2, attempt - 1); // Exponential backoff
-                console.log(`Retry attempt ${attempt}/${maxRetries} after ${delay}ms`);
-                await new Promise(resolve => setTimeout(resolve, delay));
+        // Se la risposta non è ok, restituisci stringa vuota
+        if (!response.ok) {
+            if (response.status === 429) {
+                isRateLimited = true;
+                setTimeout(() => {
+                    isRateLimited = false;
+                }, RATE_LIMIT_DURATION);
             }
-
-            const response = await fetch("https://graphql.anilist.co", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                },
-                body: JSON.stringify({ query, variables })
-            });
-
-            if (!response.ok) {
-                // Handle HTTP errors
-                if (response.status === 429) {
-                    console.warn("Rate limit reached (429)");
-                    isRateLimited = true;
-                    setTimeout(() => {
-                        isRateLimited = false;
-                    }, RATE_LIMIT_DURATION);
-                    return ""; // Don't retry with rate limit
-                }
-
-                if (attempt < maxRetries) {
-                    console.warn(`HTTP error ${response.status}, will retry`);
-                    continue; // Retry
-                }
-
-                console.warn(`HTTP error ${response.status}, attempts exhausted`);
-                return "";
-            }
-
-            const data = await response.json();
-
-            // Check for GraphQL errors
-            if (data.errors) {
-                if (data.errors.some(e => e.message && e.message.toLowerCase().includes('rate'))) {
-                    console.warn("Rate limit indicated in GraphQL responses");
-                    isRateLimited = true;
-                    setTimeout(() => {
-                        isRateLimited = false;
-                    }, RATE_LIMIT_DURATION);
-                    return "";
-                }
-
-                console.warn("GraphQL errors:", data.errors);
-                if (attempt < maxRetries) continue; // Retry
-                return "";
-            }
-
-            // Success!
-            const notes = data.data?.MediaList?.notes || "";
-            console.log(`Fetched comment for ${username}:`, notes ? "Has comment" : "No comment");
-            return notes;
-
-        } catch (error) {
-            // Network/connection error handling
-            if (error.name === 'AbortError') {
-                console.warn("Request aborted");
-                return "";
-            }
-
-            if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
-                // Common network error, could be a temporary issue
-                console.warn("Network error, may retry", attempt, "/", maxRetries);
-                if (attempt < maxRetries) continue; // Retry
-            }
-
-            // Other errors are logged but not shown to the user as errors
-            console.warn("Fetch error:", error.name, error.message);
             return "";
         }
-    }
 
-    return ""; // Fallback after attempts
+        const data = await response.json();
+
+        // Se ci sono errori, restituisci stringa vuota
+        if (data.errors) {
+            return "";
+        }
+
+        // Success
+        const notes = data.data?.MediaList?.notes || "";
+        return notes;
+    } catch (error) {
+        // Per qualsiasi errore, restituisci stringa vuota
+        return "";
+    }
 }
 
 // Extract media ID from URL
@@ -973,112 +902,67 @@ function extractMediaIdFromUrl() {
     return null;
 }
 
-// Improved cache storage with error handling
+// Improved cache storage with error handling - APPROCCIO ALTERNATIVO
 function trySaveCacheToStorage() {
+    // Approccio con localStorage per evitare l'errore "Extension context invalidated"
     try {
-        // First check if chrome.storage is available
-        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-            chrome.storage.local.set({commentCache}, function() {
-                if (chrome.runtime.lastError) {
-                    console.warn("Cache save warning:", chrome.runtime.lastError.message);
-                } else {
-                    console.log(`Saved ${Object.keys(commentCache).length} items to cache`);
-                }
-            });
-        } else {
-            // Fallback to localStorage if extension context is invalid
-            try {
-                localStorage.setItem('anilist_comment_cache', JSON.stringify(commentCache));
-                console.log(`Saved ${Object.keys(commentCache).length} items to localStorage`);
-            } catch (e) {
-                console.warn("Could not save to localStorage:", e);
-            }
-        }
+        localStorage.setItem('anilist_comment_cache', JSON.stringify(commentCache));
     } catch (e) {
-        console.warn("Cache save skipped:", e);
+        // Ignora silenziosamente
     }
 }
 
-// Load cache from storage with fallback
+// Load cache from storage with fallback - APPROCCIO ALTERNATIVO
 function loadCacheFromStorage() {
-    try {
-        // Try chrome.storage first
-        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-            chrome.storage.local.get(['commentCache'], function(result) {
-                if (chrome.runtime.lastError) {
-                    console.warn("Error loading from chrome.storage:", chrome.runtime.lastError.message);
-                    tryLoadFromLocalStorage();
-                } else if (result.commentCache) {
-                    commentCache = result.commentCache;
-                    console.log(`Loaded ${Object.keys(commentCache).length} items from chrome.storage`);
-                } else {
-                    tryLoadFromLocalStorage();
-                }
-            });
-        } else {
-            // Fallback to localStorage
-            tryLoadFromLocalStorage();
-        }
-    } catch (e) {
-        console.warn("Error during cache loading:", e);
-        tryLoadFromLocalStorage();
-    }
-}
-
-// Fallback to localStorage
-function tryLoadFromLocalStorage() {
     try {
         const cached = localStorage.getItem('anilist_comment_cache');
         if (cached) {
-            commentCache = JSON.parse(cached);
-            console.log(`Loaded ${Object.keys(commentCache).length} items from localStorage`);
+            try {
+                const parsedCache = JSON.parse(cached);
+                if (parsedCache && typeof parsedCache === 'object') {
+                    commentCache = parsedCache;
+                    return true;
+                }
+            } catch (e) {
+                // Se il JSON è corrotto, inizializziamo una cache vuota
+                commentCache = {};
+            }
         }
     } catch (e) {
-        console.warn("Could not load from localStorage:", e);
+        // Se fallisce anche localStorage, inizializziamo una cache vuota
+        commentCache = {};
     }
-}
-
-// Storage change listener
-try {
-    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
-        chrome.storage.onChanged.addListener(function(changes, namespace) {
-            if (namespace === 'local' && changes.commentCache && changes.commentCache.newValue) {
-                commentCache = changes.commentCache.newValue;
-                console.log("Cache updated from storage");
-            }
-        });
-    }
-} catch (e) {
-    console.warn("Could not add storage listener:", e);
+    return false;
 }
 
 // Initialization events
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("DOMContentLoaded fired");
+    // Carica cache appena possibile
     loadCacheFromStorage();
     setTimeout(initialize, 150);
 });
 
 // Fallback for pages that load slowly
 window.addEventListener('load', () => {
-    console.log("Window load fired");
     if (!isInitialized) {
+        // Assicurati che la cache sia caricata prima di inizializzare
+        loadCacheFromStorage();
         setTimeout(initialize, 300);
     }
 });
 
-// Cache periodic save with reduced frequency
+// Cache periodic save
 let saveInterval = setInterval(() => {
     try {
         if (Object.keys(commentCache).length > 0) {
             trySaveCacheToStorage();
         }
     } catch (e) {
-        console.warn("Periodic save error:", e);
+        // Ignora silenziosamente
     }
-}, 300000); // Every 5 minutes instead of 1 minute
+}, 300000); // Every 5 minutes
 
-// Remove interval on unload to prevent errors
+// Clean up on unload
 window.addEventListener('beforeunload', () => {
     clearInterval(saveInterval);
     if (Object.keys(commentCache).length > 0) {
@@ -1086,5 +970,6 @@ window.addEventListener('beforeunload', () => {
     }
 });
 
-// Immediate initialization
+// Immediate initialization after cache load
+loadCacheFromStorage();
 setTimeout(initialize, 50);
