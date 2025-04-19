@@ -272,10 +272,11 @@ async function processApiQueue() {
             timestamp: Date.now()
         };
 
-        // Importante: Aggiungi SEMPRE l'icona, anche se il commento è vuoto
-        // Questo risolve il problema quando il commento non c'è ma dovremmo comunque
-        // permettere l'interazione con l'icona
-        addCommentIcon(request.entry, request.username, request.mediaId);
+        // Verifichiamo dalla cache appena aggiornata
+        const cachedContent = commentCache[cacheKey].content;
+        if (cachedContent && cachedContent.trim() !== '') {
+            addCommentIcon(request.entry, request.username, request.mediaId);
+        }
 
         // Save cache periodically
         if (Object.keys(commentCache).length % 5 === 0) {
@@ -286,7 +287,7 @@ async function processApiQueue() {
         setTimeout(processApiQueue, BATCH_DELAY);
 
     } catch (error) {
-        // Process next request after delay, senza loggare errori
+        // Process next request after delay, without logging errors
         setTimeout(processApiQueue, BATCH_DELAY);
     }
 }
