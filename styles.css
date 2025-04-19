@@ -1,9 +1,9 @@
 /**
  * Anilist Hover Comments - Enhanced CSS Styles
  * 
- * This stylesheet provides improved styling for the comment tooltip system
- * with enhanced visual feedback for refresh states and cache status.
- * 
+ * This stylesheet provides enhanced styles for the comment tooltip system
+ * with improved visual feedback for refresh and cache states.
+ *
  * Created by ExAstra
  * GitHub: https://github.com/rikymarche-ctrl/anilist-extension
  */
@@ -73,16 +73,12 @@
   max-height: 500px; /* Height before scrolling appears */
   overflow-y: auto;  /* Enable vertical scrolling */
 
-  /* Reset problematic positioning properties */
-  transform: none !important; /* Remove any transforms that could affect positioning */
-  transform-origin: unset;
-
   /* Ensure consistent positioning */
   position: absolute;
   z-index: 100000;
 
-  /* Disable centering animations */
-  transition: opacity 0.3s ease !important; /* Only animate opacity */
+  /* Animate opacity only */
+  transition: opacity 0.3s ease !important;
 
   /* Base styling */
   background: rgba(38, 44, 55, 0.97);
@@ -99,11 +95,6 @@
   background: linear-gradient(145deg, rgba(38, 45, 58, 0.98), rgba(28, 33, 42, 0.98));
   border-left: 3px solid #5bc2ff;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(61, 180, 242, 0.2);
-}
-
-/* Remove the default left arrow positioning which can affect alignment */
-#anilist-tooltip::before {
-  display: none;
 }
 
 /* Add a new left arrow that's consistently positioned */
@@ -192,6 +183,11 @@
   transition: color 0.3s ease;
 }
 
+/* Warning color for old cache */
+#anilist-tooltip .tooltip-info.cache-warning {
+  color: #ffcc00;
+}
+
 /* Refresh button */
 #anilist-tooltip .tooltip-refresh-btn {
   background: rgba(61, 180, 242, 0.2);
@@ -259,21 +255,23 @@
  * COMMENT ICON
  *------------------------------------------------------*/
 
-/* Comment icon styling */
+/* Comment icon styling - updated for non-intrusive display */
 .anilist-comment-icon {
   color: #8f98a6;
   font-size: 14px;
   cursor: pointer;
   opacity: 0.8;
   vertical-align: middle;
-  visibility: visible !important;
-  display: inline-block !important;
-  position: relative;
   transition: color 0.2s ease, opacity 0.2s ease, transform 0.2s ease, filter 0.2s ease !important;
 }
 
-/* Hover effect for comment icon */
-.anilist-comment-icon:hover {
+/* Row hover effect - icon turns blue */
+.anilist-comment-icon.row-hover {
+  color: #3db4f2 !important;
+}
+
+/* Hover effect for comment icon itself (animation) */
+.comment-icon-column:hover .anilist-comment-icon {
   color: #3db4f2;
   opacity: 1;
   transform: scale(1.2);
@@ -288,27 +286,31 @@
   filter: drop-shadow(0 0 3px rgba(61, 180, 242, 0.5)) !important;
 }
 
-/* Default state when parent is not hovered */
-a:not(:hover) .anilist-comment-icon:not(.active-comment) {
-  color: #8f98a6 !important;
-  opacity: 0.8 !important;
-  transform: none !important;
-  filter: none !important;
-}
-
-/* Container for comment icon */
+/* Container for comment icon - Updated for fixed positioning next to rating */
 .comment-icon-column {
-  z-index: 5;
-  cursor: pointer;
-  pointer-events: auto;
-  min-width: 16px;
-  min-height: 16px;
   position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
+  cursor: pointer;
+  pointer-events: auto;
+  z-index: 10;
+  top: 50%;
+  transform: translateY(-50%);
+
+  /* Position further to the left */
+  right: 100px; /* Fixed position further left */
+  width: 20px;
+  height: 20px;
+
+  /* Make icon blend in */
+  background: transparent;
+  border-radius: 50%;
+}
+
+/* Hover effect for icon container */
+.comment-icon-column:hover {
+  background-color: rgba(61, 180, 242, 0.1);
 }
 
 /*------------------------------------------------------
@@ -372,69 +374,6 @@ div.following a {
     width: 220px;
     font-size: 13px;
   }
-}
-
-/* Dark Theme (Default) */
-#anilist-tooltip.theme-dark {
-  background: rgba(38, 44, 55, 0.97);
-  color: white;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(61, 180, 242, 0.1);
-  border-left: 3px solid #3db4f2;
-}
-
-#anilist-tooltip.theme-dark::after {
-  border-right: 8px solid rgba(38, 44, 55, 0.97);
-}
-
-#anilist-tooltip.theme-dark .tooltip-refresh-btn {
-  background: rgba(61, 180, 242, 0.2);
-  color: white;
-}
-
-#anilist-tooltip.theme-dark .tooltip-footer {
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-#anilist-tooltip.theme-dark .no-comment {
-  color: #aaa;
-}
-
-/* Light Theme */
-#anilist-tooltip.theme-light {
-  background: rgba(245, 246, 248, 0.97);
-  color: #313131;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(61, 180, 242, 0.1);
-  border-left: 3px solid #3db4f2;
-}
-
-#anilist-tooltip.theme-light::after {
-  border-right: 8px solid rgba(245, 246, 248, 0.97);
-}
-
-#anilist-tooltip.theme-light .tooltip-refresh-btn {
-  background: rgba(61, 180, 242, 0.2);
-  color: #313131;
-}
-
-#anilist-tooltip.theme-light .tooltip-footer {
-  border-top: 1px solid rgba(0, 0, 0, 0.1);
-}
-
-#anilist-tooltip.theme-light .no-comment {
-  color: #666;
-}
-
-/* Theme-specific rate limit warning */
-.rate-limit-warning.theme-dark {
-  background-color: rgba(255, 50, 50, 0.1);
-  border: 1px solid rgba(255, 50, 50, 0.3);
-  color: #ff6b6b;
-}
-
-.rate-limit-warning.theme-light {
-  background-color: rgba(255, 50, 50, 0.05);
-  border: 1px solid rgba(255, 50, 50, 0.2);
-  color: #e63939;
 }
 
 /* Dark Theme (Default) */
