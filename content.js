@@ -1,20 +1,34 @@
 /**
  * Anilist Hover Comments - Content Script
  *
- * This script identifies user comments on Anilist anime/manga pages and displays
- * an icon that shows comments when hovered over.
+ * This script enhances Anilist anime/manga pages by displaying user comments via
+ * a hover interface. It identifies user entries in the "Following" section and
+ * provides a non-intrusive way to view their comments without visiting their profiles.
  *
- * GitHub: https://github.com/rikymarche-ctrl/anilist-extension
+ * Features:
+ * - Shows a comment icon next to user entries with comments
+ * - Displays comments in a tooltip on hover or click
+ * - Implements a caching system to reduce API requests
+ * - Handles SPA (Single Page Application) navigation
+ * - Implements rate limiting to avoid API restrictions
+ *
+ * @author ExAstra
+ * @version 1.2.0
+ * @see https://github.com/rikymarche-ctrl/anilist-extension
  */
 console.log("Anilist Hover Comments: Loaded!");
 
-// Configuration constants
+/**
+ * Configuration constants for application behavior
+ */
 const CACHE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_REQUESTS_PER_MINUTE = 10; // Conservative to avoid rate limiting
 const RATE_LIMIT_DURATION = 60000; // 1 minute in milliseconds
 const BATCH_DELAY = 200; // Delay between API requests in ms
 
-// Global state
+/**
+ * Global state variables
+ */
 let commentCache = {};
 let isInitialized = false;
 let isRateLimited = false;
@@ -25,7 +39,11 @@ let lastMediaId = null;
 let apiQueue = [];
 let processingQueue = false;
 
-// Load FontAwesome for icons
+/**
+ * Loads FontAwesome library for icons if not already present.
+ *
+ * @returns {void}
+ */
 function loadFontAwesome() {
     if (document.querySelector('link[href*="fontawesome"]')) return;
 
@@ -38,7 +56,11 @@ function loadFontAwesome() {
     document.head.appendChild(link);
 }
 
-// Main initialization function
+/**
+ * Main initialization function. Sets up the extension on the current page.
+ *
+ * @returns {void}
+ */
 function initialize() {
     console.log("Initializing extension");
     loadFontAwesome();
@@ -48,19 +70,19 @@ function initialize() {
 
     if (isInitialized) return;
 
-    // Reset state
+    // Reset all extension state
     resetState();
 
-    // Forza il caricamento della cache
+    // Force cache loading from storage
     loadCacheFromStorage();
 
-    // Find the following section
+    // Find and process the following section
     findFollowingSection(media.id);
 
     // Set up additional configuration for SPA pages
     observeUrlChanges();
 
-    // Repeat checks a few times for pages with slow loading
+    // Repeat checks after delays to handle slow-loading pages
     setTimeout(() => {
         if (!isInitialized) findFollowingSection(media.id);
     }, 500);
@@ -70,7 +92,12 @@ function initialize() {
     }, 1500);
 }
 
-// Find the following section and process users
+/**
+ * Finds the "Following" section on the page and processes user entries.
+ *
+ * @param {number} mediaId - The ID of the current anime or manga
+ * @returns {void}
+ */
 function findFollowingSection(mediaId) {
     console.log("Looking for Following section...");
 
@@ -113,7 +140,7 @@ function findFollowingSection(mediaId) {
 
     if (userLinks.length === 0) return;
 
-    // Process each user
+    // Process each user entry
     let processedCount = 0;
 
     userLinks.forEach(link => {
@@ -132,7 +159,11 @@ function findFollowingSection(mediaId) {
     }
 }
 
-// Reset state
+/**
+ * Resets all extension state and removes any tooltips.
+ *
+ * @returns {void}
+ */
 function resetState() {
     const tooltip = document.getElementById('anilist-tooltip');
     if (tooltip) tooltip.remove();
@@ -144,7 +175,12 @@ function resetState() {
     processingQueue = false;
 }
 
-// Observe URL changes for SPAs
+/**
+ * Sets up observers to detect URL changes for Single Page Application support.
+ * Re-initializes the extension when navigation occurs.
+ *
+ * @returns {void}
+ */
 function observeUrlChanges() {
     const observer = new MutationObserver(() => {
         const currentUrl = location.href;
@@ -181,7 +217,15 @@ function observeUrlChanges() {
     });
 }
 
-// Check user comment and add icon if necessary
+/**
+ * Checks if a user has a comment for the specified media and adds
+ * an icon if needed.
+ *
+ * @param {HTMLElement} entry - The DOM element representing the user entry
+ * @param {string} username - The username to check
+ * @param {number} mediaId - The ID of the anime/manga
+ * @returns {Promise<void>}
+ */
 async function checkUserComment(entry, username, mediaId) {
     // Check if the icon already exists
     if (entry.querySelector('.comment-icon-column')) {
@@ -193,8 +237,6 @@ async function checkUserComment(entry, username, mediaId) {
 
     // Check cache first
     let foundInCache = false;
-    let hasComment = false;
-
     if (commentCache[cacheKey]) {
         const cache = commentCache[cacheKey];
         const now = Date.now();
@@ -203,19 +245,25 @@ async function checkUserComment(entry, username, mediaId) {
         if (cache.timestamp && (now - cache.timestamp) < CACHE_MAX_AGE) {
             foundInCache = true;
             if (cache.content && cache.content.trim() !== '') {
-                hasComment = true;
                 addCommentIcon(entry, username, mediaId);
             }
         }
     }
 
-    // Se non abbiamo trovato nella cache, o la cache è scaduta, fai richiesta API
+    // If not found in cache or cache is expired, make API request
     if (!foundInCache) {
         queueApiRequest(entry, username, mediaId);
     }
 }
 
-// Queue API requests to control request rate
+/**
+ * Adds a request to the API queue to control request rate.
+ *
+ * @param {HTMLElement} entry - The DOM element representing the user entry
+ * @param {string} username - The username to check
+ * @param {number} mediaId - The ID of the anime/manga
+ * @returns {void}
+ */
 function queueApiRequest(entry, username, mediaId) {
     apiQueue.push({ entry, username, mediaId });
 
@@ -224,7 +272,11 @@ function queueApiRequest(entry, username, mediaId) {
     }
 }
 
-// Process API queue with controlled pacing
+/**
+ * Processes the API request queue with controlled pacing to avoid rate limiting.
+ *
+ * @returns {Promise<void>}
+ */
 async function processApiQueue() {
     if (apiQueue.length === 0) {
         processingQueue = false;
@@ -245,6 +297,7 @@ async function processApiQueue() {
             isRateLimited = false;
         }
 
+        // If rate limited, requeue and wait
         if (requestsInLastMinute >= MAX_REQUESTS_PER_MINUTE) {
             isRateLimited = true;
 
@@ -260,19 +313,20 @@ async function processApiQueue() {
             return;
         }
 
+        // Increment request counter
         requestsInLastMinute++;
 
-        // Fetch comment
+        // Fetch comment from API
         const comment = await fetchUserComment(request.username, request.mediaId);
 
-        // Update cache
+        // Update cache with new data
         const cacheKey = `${request.username}-${request.mediaId}`;
         commentCache[cacheKey] = {
             content: comment || '',
             timestamp: Date.now()
         };
 
-        // Verifichiamo dalla cache appena aggiornata
+        // Check from the freshly updated cache
         const cachedContent = commentCache[cacheKey].content;
         if (cachedContent && cachedContent.trim() !== '') {
             addCommentIcon(request.entry, request.username, request.mediaId);
@@ -292,7 +346,14 @@ async function processApiQueue() {
     }
 }
 
-// Add comment icon to user entry
+/**
+ * Adds a comment icon to a user entry if they have a comment.
+ *
+ * @param {HTMLElement} entry - The DOM element representing the user entry
+ * @param {string} username - The username
+ * @param {number} mediaId - The ID of the anime/manga
+ * @returns {void}
+ */
 function addCommentIcon(entry, username, mediaId) {
     // Check if the icon already exists
     if (entry.querySelector('.anilist-comment-icon')) {
@@ -312,7 +373,7 @@ function addCommentIcon(entry, username, mediaId) {
 
     // Position the icon container absolutely within the entry
     entry.style.position = 'relative';
-    iconCol.style.right = '100px';  // Moved further left
+    iconCol.style.right = '100px';
 
     // Append to entry
     entry.appendChild(iconCol);
@@ -321,10 +382,19 @@ function addCommentIcon(entry, username, mediaId) {
     setupHoverListener(iconCol, username, mediaId);
 }
 
-// Tooltip management
+/**
+ * Tooltip Manager class - Enhanced version with improved priority and better disappearing behavior.
+ * Handles the display, positioning, and content of tooltips.
+ * Implemented as a singleton to ensure only one tooltip exists.
+ */
 class TooltipManager {
     static #instance = null;
 
+    /**
+     * Gets the singleton instance of the TooltipManager.
+     *
+     * @returns {TooltipManager} The singleton instance
+     */
     static getInstance() {
         if (!TooltipManager.#instance) {
             TooltipManager.#instance = new TooltipManager();
@@ -332,32 +402,114 @@ class TooltipManager {
         return TooltipManager.#instance;
     }
 
+    /**
+     * Constructor - initializes state and sets up event listeners.
+     */
     constructor() {
         this.tooltip = null;
         this.hideTimer = null;
+        this.showTimer = null;
+        this.autoHideCheckTimer = null;
         this.currentElement = null;
-        this.currentUsername = null;
-        this.currentMediaId = null;
+        this.isMouseOverTooltip = false;
+        this.isMouseOverIcon = false;
+        this.tooltipFadingOut = false;
+        this.tooltipState = 'inactive'; // 'inactive', 'showing', 'visible', 'hiding'
+        this.lastMousePosition = { x: 0, y: 0 }; // Track last mouse position
 
-        // Add global mouse move listener
+        // Add global mouse move listener for hover detection
         document.addEventListener('mousemove', this.handleMouseMove.bind(this));
+
+        // Add global mouseleave to document to detect when mouse leaves window entirely
+        document.addEventListener('mouseleave', this.handleDocumentLeave.bind(this));
+
+        // Set up auto hide check timer that runs every 500ms
+        this.startAutoHideChecker();
     }
 
+    // Set up auto hide check timer that runs every 500ms
+    startAutoHideChecker() {
+        if (this.autoHideCheckTimer) {
+            clearInterval(this.autoHideCheckTimer);
+        }
+        this.autoHideCheckTimer = setInterval(() => {
+            this.checkAndAutoHide();
+        }, 500);
+
+        // Add cleanup when window unloads to prevent memory leaks
+        window.addEventListener('beforeunload', () => {
+            if (this.autoHideCheckTimer) {
+                clearInterval(this.autoHideCheckTimer);
+                this.autoHideCheckTimer = null;
+            }
+        });
+    }
+
+    /**
+     * Checks if tooltip should be hidden and hides it if necessary
+     */
+    checkAndAutoHide() {
+        if (!this.tooltip || this.tooltip.style.display !== 'block' || this.tooltipState === 'hiding') {
+            return;
+        }
+
+        // Only proceed if we have a current tooltip and it's visible
+        if (this.currentElement && this.tooltip) {
+            const tooltipRect = this.tooltip.getBoundingClientRect();
+            const iconRect = this.currentElement.getBoundingClientRect();
+
+            // Get current mouse position
+            const mouseX = this.lastMousePosition.x;
+            const mouseY = this.lastMousePosition.y;
+
+            // Exact check if mouse is inside tooltip or icon - no tolerance
+            const isMouseInTooltip = (
+                mouseX >= tooltipRect.left &&
+                mouseX <= tooltipRect.right &&
+                mouseY >= tooltipRect.top &&
+                mouseY <= tooltipRect.bottom
+            );
+
+            const isMouseInIcon = (
+                mouseX >= iconRect.left &&
+                mouseX <= iconRect.right &&
+                mouseY >= iconRect.top &&
+                mouseY <= iconRect.bottom
+            );
+
+            // Update state
+            this.isMouseOverTooltip = isMouseInTooltip;
+            this.isMouseOverIcon = isMouseInIcon;
+
+            // If mouse is not over either element, hide the tooltip
+            if (!isMouseInTooltip && !isMouseInIcon) {
+                this.hide();
+            }
+        }
+    }
+
+    /**
+     * Shows the tooltip for the specified element.
+     * Overrides any existing or fading tooltip.
+     *
+     * @param {HTMLElement} element - The element triggering the tooltip
+     * @param {string} username - The username
+     * @param {number} mediaId - The ID of the anime/manga
+     */
     show(element, username, mediaId) {
-        // Remove active class from ALL icons first to fix highlighting persistence
+        // Immediately interrupt any hiding operation in progress
+        this.interruptHiding();
+
+        // Remove active-comment class from ALL icons first to fix highlighting persistence
         document.querySelectorAll('.anilist-comment-icon').forEach(icon => {
             icon.classList.remove('active-comment');
         });
 
-        // Cancel hide timer if active
-        if (this.hideTimer) {
-            clearTimeout(this.hideTimer);
-            this.hideTimer = null;
-        }
-
+        // Update current state
         this.currentElement = element;
-        this.currentUsername = username;
-        this.currentMediaId = mediaId;
+        this.isMouseOverIcon = true;
+        this.tooltipState = 'showing';
+        this.tooltipFadingOut = false;
 
         // Get or create tooltip
         const tooltip = this.getTooltip();
@@ -365,6 +517,7 @@ class TooltipManager {
         // Force visibility
         tooltip.style.opacity = '0';
         tooltip.style.display = 'block';
+        tooltip.classList.add('active'); // Add class to ensure visibility
 
         // Position tooltip properly - Force immediate positioning
         this.positionTooltip(element);
@@ -383,36 +536,105 @@ class TooltipManager {
             // Reposition again to ensure correct placement
             this.positionTooltip(element);
             tooltip.style.opacity = '1';
+            this.tooltipState = 'visible';
 
             // Load comment
             this.loadComment(username, mediaId);
         }, 50);
     }
 
-    hide() {
-        if (!this.tooltip || this.hideTimer) return;
+    /**
+     * Immediately interrupts any hiding operation in progress.
+     * This is crucial when switching from one tooltip to another.
+     */
+    interruptHiding() {
+        // Clear any active hide timer
+        if (this.hideTimer) {
+            clearTimeout(this.hideTimer);
+            this.hideTimer = null;
+        }
 
-        this.hideTimer = setTimeout(() => {
-            if (this.tooltip) {
-                this.tooltip.style.opacity = '0';
+        // Clear any active show timer
+        if (this.showTimer) {
+            clearTimeout(this.showTimer);
+            this.showTimer = null;
+        }
 
-                setTimeout(() => {
-                    this.tooltip.style.display = 'none';
-
-                    // Reset ALL icon highlights
-                    document.querySelectorAll('.anilist-comment-icon').forEach(icon => {
-                        icon.classList.remove('active-comment');
-                    });
-
-                    this.currentElement = null;
-                    this.currentUsername = null;
-                    this.currentMediaId = null;
-                    this.hideTimer = null;
-                }, 300); // Match the CSS transition time
-            }
-        }, 100);
+        // If tooltip exists and is fading out, stop the operation
+        if (this.tooltip && this.tooltipFadingOut) {
+            this.tooltip.style.opacity = '1';
+            this.tooltipFadingOut = false;
+            this.tooltipState = 'visible';
+        }
     }
 
+    /**
+     * Handles when mouse leaves the document entirely
+     */
+    handleDocumentLeave() {
+        if (this.tooltip && this.tooltip.style.display === 'block') {
+            // When mouse leaves document, force hide immediately
+            this.isMouseOverTooltip = false;
+            this.isMouseOverIcon = false;
+            this.hide();
+        }
+    }
+
+    /**
+     * Hides the tooltip with a fade-out animation.
+     */
+    hide() {
+        // Don't hide if mouse is over tooltip or icon
+        if (this.isMouseOverTooltip || this.isMouseOverIcon) {
+            return;
+        }
+
+        // Don't start multiple hide operations
+        if (!this.tooltip || this.hideTimer || this.tooltipState === 'hiding') return;
+
+        // Set state to hiding
+        this.tooltipState = 'hiding';
+
+        // Almost immediate hide with minimal delay
+        this.hideTimer = setTimeout(() => {
+            // Double-check mouse state before hiding
+            if (!this.isMouseOverTooltip && !this.isMouseOverIcon) {
+                if (this.tooltip) {
+                    this.tooltipFadingOut = true;
+                    this.tooltip.style.opacity = '0';
+
+                    setTimeout(() => {
+                        // Final check that another tooltip wasn't requested in the meantime
+                        if (this.tooltipFadingOut && this.tooltipState === 'hiding') {
+                            this.tooltip.style.display = 'none';
+                            this.tooltip.classList.remove('active');
+
+                            // Reset ALL icon highlights
+                            document.querySelectorAll('.anilist-comment-icon').forEach(icon => {
+                                icon.classList.remove('active-comment');
+                            });
+
+                            this.currentElement = null;
+                            this.tooltipFadingOut = false;
+                            this.tooltipState = 'inactive';
+                        }
+                        this.hideTimer = null;
+                    }, 300); // Match the CSS transition time
+                }
+            } else {
+                // Cancel the hide if mouse moved back over elements
+                this.tooltipState = 'visible';
+                this.hideTimer = null;
+            }
+        }, 50); // Very fast hiding initiation
+    }
+
+    /**
+     * Gets or creates the tooltip element.
+     * Enhanced with more robust event handling.
+     *
+     * @returns {HTMLElement} The tooltip DOM element
+     */
     getTooltip() {
         if (!this.tooltip) {
             this.tooltip = document.getElementById('anilist-tooltip');
@@ -425,16 +647,22 @@ class TooltipManager {
                 this.tooltip.className = 'theme-dark'; // Use site theme
                 document.body.appendChild(this.tooltip);
 
-                // Add event listeners
+                // Add event listeners with explicit state tracking
                 this.tooltip.addEventListener('mouseenter', () => {
-                    if (this.hideTimer) {
-                        clearTimeout(this.hideTimer);
-                        this.hideTimer = null;
-                    }
+                    this.isMouseOverTooltip = true;
+
+                    // Interrupt any hide operation in progress
+                    this.interruptHiding();
                 });
 
                 this.tooltip.addEventListener('mouseleave', () => {
-                    this.hide();
+                    this.isMouseOverTooltip = false;
+
+                    // Only start hiding if mouse is also not over the icon
+                    // Use exact check without delay
+                    if (!this.isMouseOverIcon) {
+                        this.hide();
+                    }
                 });
             }
         }
@@ -442,6 +670,12 @@ class TooltipManager {
         return this.tooltip;
     }
 
+    /**
+     * Positions the tooltip next to the element.
+     * Enhanced with stability measures to prevent flickering.
+     *
+     * @param {HTMLElement} element - The element to position the tooltip next to
+     */
     positionTooltip(element) {
         const tooltip = this.getTooltip();
 
@@ -471,17 +705,101 @@ class TooltipManager {
         const parentRect = parentEntry.getBoundingClientRect();
         const posY = window.scrollY + parentRect.top;
 
-        // Set tooltip position
-        tooltip.style.transition = "none";
+        // Check if tooltip is already visible
+        const isVisible = tooltip.style.display === 'block' && tooltip.style.opacity !== '0';
+
+        if (isVisible) {
+            tooltip.style.transition = "left 0.2s ease, top 0.2s ease, opacity 0.3s ease";
+        } else {
+            // Disable transitions for initial positioning
+            tooltip.style.transition = "none";
+        }
+
         tooltip.style.left = posX + 'px';
         tooltip.style.top = posY + 'px';
 
         // Re-enable transitions
-        setTimeout(() => {
-            tooltip.style.transition = "opacity 0.3s ease";
-        }, 20);
+        if (!isVisible) {
+            setTimeout(() => {
+                tooltip.style.transition = "left 0.2s ease, top 0.2s ease, opacity 0.3s ease";
+            }, 20);
+        }
     }
 
+    /**
+     * Handles mouse movement to show/hide the tooltip.
+     * Enhanced with improved hover detection.
+     *
+     * @param {MouseEvent} e - The mouse event
+     */
+    handleMouseMove(e) {
+        // Update last known position of mouse
+        this.lastMousePosition = {
+            x: e.clientX,
+            y: e.clientY
+        };
+
+        // Skip if tooltip not initialized
+        if (!this.tooltip) {
+            return;
+        }
+
+        // Skip if current element not set
+        if (!this.currentElement) {
+            return;
+        }
+
+        // Check if tooltip is being displayed
+        const isTooltipVisible = this.tooltip.style.display === 'block';
+
+        if (isTooltipVisible) {
+            const tooltipRect = this.tooltip.getBoundingClientRect();
+            const elementRect = this.currentElement.getBoundingClientRect();
+
+            // Exact check if mouse is inside tooltip - no tolerance
+            const isMouseInTooltip = (
+                e.clientX >= tooltipRect.left &&
+                e.clientX <= tooltipRect.right &&
+                e.clientY >= tooltipRect.top &&
+                e.clientY <= tooltipRect.bottom
+            );
+
+            // Exact check if mouse is inside icon - no tolerance
+            const isMouseInIcon = (
+                e.clientX >= elementRect.left &&
+                e.clientX <= elementRect.right &&
+                e.clientY >= elementRect.top &&
+                e.clientY <= elementRect.bottom
+            );
+
+            // Update state
+            this.isMouseOverTooltip = isMouseInTooltip;
+            this.isMouseOverIcon = isMouseInIcon;
+
+            // Keep visible in safe area
+            if (isMouseInTooltip || isMouseInIcon) {
+                // Interrupt any hide operation in progress
+                this.interruptHiding();
+            } else {
+                // Start hiding immediately if mouse is outside both elements
+                if (!this.hideTimer && this.tooltipState !== 'hiding') {
+                    this.hide();
+                }
+            }
+        } else {
+            // If tooltip is not visible, reset hover states
+            this.isMouseOverTooltip = false;
+            this.isMouseOverIcon = false;
+        }
+    }
+
+    /**
+     * Loads comment data and updates the tooltip.
+     *
+     * @param {string} username - The username
+     * @param {number} mediaId - The ID of the anime/manga
+     * @returns {Promise<void>}
+     */
     async loadComment(username, mediaId) {
         // Cache key
         const cacheKey = `${username}-${mediaId}`;
@@ -491,7 +809,7 @@ class TooltipManager {
         let cacheIsValid = false;
         const now = Date.now();
 
-        // Tentativo di caricamento dalla cache
+        // Attempt to load from cache
         if (commentCache[cacheKey]) {
             if (typeof commentCache[cacheKey] === 'object' && commentCache[cacheKey].content !== undefined) {
                 comment = commentCache[cacheKey].content;
@@ -572,6 +890,13 @@ class TooltipManager {
         }
     }
 
+    /**
+     * Updates the tooltip content with the comment data.
+     *
+     * @param {string} comment - The comment text
+     * @param {string} username - The username
+     * @param {number} mediaId - The ID of the anime/manga
+     */
     updateTooltipContent(comment, username, mediaId) {
         if (!this.tooltip) return;
 
@@ -644,50 +969,65 @@ class TooltipManager {
             refreshButton.disabled = true;
 
             try {
-                // Rate limit check
+                // Check if rate limit timer should be reset
                 const now = Date.now();
                 if (now - lastMinuteReset > RATE_LIMIT_DURATION) {
                     requestsInLastMinute = 0;
                     lastMinuteReset = now;
                 }
 
+                // Handle rate limiting with early return instead of exception
                 if (requestsInLastMinute >= MAX_REQUESTS_PER_MINUTE) {
-                    throw new Error("Rate limit reached");
+                    // Show rate limit error to user
+                    refreshButton.innerHTML = '<i class="fa-solid fa-exclamation-circle"></i> Rate Limited';
+                    refreshButton.classList.add('error');
+
+                    // Reset button after delay
+                    setTimeout(() => {
+                        refreshButton.innerHTML = '<i class="fa-solid fa-sync"></i> Retry';
+                        refreshButton.classList.remove('error');
+                        refreshButton.disabled = false;
+                    }, 2000);
+
+                    return; // Exit function early
                 }
 
+                // Increment request counter
                 requestsInLastMinute++;
 
-                // Fetch with timeout
+                // Set up fetch with timeout protection
                 const fetchPromise = fetchUserComment(username, mediaId);
                 const timeoutPromise = new Promise((_, reject) =>
                     setTimeout(() => reject(new Error("Request timed out")), 8000)
                 );
 
+                // Wait for either successful fetch or timeout, whichever happens first
                 const freshComment = await Promise.race([fetchPromise, timeoutPromise]);
 
-                // Update cache
+                // Store result in cache
                 commentCache[cacheKey] = {
                     content: freshComment || '',
                     timestamp: Date.now()
                 };
 
-                // Update content
+                // Update UI with new content
                 this.updateTooltipContent(freshComment, username, mediaId);
 
-                // Try to save to storage
+                // Persist cache to storage
                 trySaveCacheToStorage();
 
-                // Reset button
+                // Show success indicator
                 refreshButton.innerHTML = '<i class="fa-solid fa-check"></i> Updated';
                 setTimeout(() => {
                     refreshButton.innerHTML = '<i class="fa-solid fa-sync"></i> Refresh';
                     refreshButton.disabled = false;
                 }, 2000);
             } catch (error) {
-                // Error handling
+                // Handle external errors (network issues, timeout)
                 refreshButton.innerHTML = '<i class="fa-solid fa-exclamation-circle"></i> Error';
                 refreshButton.classList.add('error');
 
+                // Reset button after delay
                 setTimeout(() => {
                     refreshButton.innerHTML = '<i class="fa-solid fa-sync"></i> Retry';
                     refreshButton.classList.remove('error');
@@ -703,45 +1043,16 @@ class TooltipManager {
         // Add footer
         this.tooltip.appendChild(footerDiv);
     }
-
-    handleMouseMove(e) {
-        // Skip if tooltip not active
-        if (!this.tooltip || this.tooltip.style.display !== 'block' || !this.currentElement) {
-            return;
-        }
-
-        const elementRect = this.currentElement.getBoundingClientRect();
-        const tooltipRect = this.tooltip.getBoundingClientRect();
-
-        // Increase tolerance for better usability
-        const tolerance = 40;
-
-        const isNearElement =
-            e.clientX >= elementRect.left - tolerance &&
-            e.clientX <= elementRect.right + tolerance &&
-            e.clientY >= elementRect.top - tolerance &&
-            e.clientY <= elementRect.bottom + tolerance;
-
-        const isNearTooltip =
-            e.clientX >= tooltipRect.left - tolerance &&
-            e.clientX <= tooltipRect.right + tolerance &&
-            e.clientY >= tooltipRect.top - tolerance &&
-            e.clientY <= tooltipRect.bottom + tolerance;
-
-        // Keep visible in safe area
-        if (isNearElement || isNearTooltip) {
-            if (this.hideTimer) {
-                clearTimeout(this.hideTimer);
-                this.hideTimer = null;
-            }
-        } else {
-            // Start hiding
-            this.hide();
-        }
-    }
 }
 
-// Set up hover listener with improved event handling
+/**
+ * Sets up hover and click listeners for comment icons.
+ * Enhanced version for more stable tooltip behavior with improved priority handling.
+ *
+ * @param {HTMLElement} element - The element to attach listeners to
+ * @param {string} username - The username
+ * @param {number} mediaId - The ID of the anime/manga
+ */
 function setupHoverListener(element, username, mediaId) {
     const tooltipManager = TooltipManager.getInstance();
     const parentEntry = element.closest('a');
@@ -765,30 +1076,73 @@ function setupHoverListener(element, username, mediaId) {
         });
     }
 
-    // Icon specific hover (for the animation effect)
+    // Icon-specific hover with improved priority handling
     element.addEventListener("mouseenter", (e) => {
         e.stopPropagation();
-        // Usare un timeout più breve ma comunque garantire che il tooltip si apra
-        setTimeout(() => tooltipManager.show(element, username, mediaId), 5);
+
+        // Set hover state immediately
+        tooltipManager.isMouseOverIcon = true;
+
+        // Immediately interrupt any hiding operation in progress
+        tooltipManager.interruptHiding();
+
+        // Show tooltip with a short delay to ensure intentional hover
+        // But first cancel any previous show timer
+        if (tooltipManager.showTimer) {
+            clearTimeout(tooltipManager.showTimer);
+        }
+
+        tooltipManager.showTimer = setTimeout(() => {
+            tooltipManager.show(element, username, mediaId);
+            tooltipManager.showTimer = null;
+        }, 50);
     });
 
     element.addEventListener("mouseleave", (e) => {
         e.stopPropagation();
-        // Piccolo delay per evitare flickering
+        tooltipManager.isMouseOverIcon = false;
+
+        // Cancel any pending show timer
+        if (tooltipManager.showTimer) {
+            clearTimeout(tooltipManager.showTimer);
+            tooltipManager.showTimer = null;
+        }
+
+        // Force hide attempt with minimal delay
         setTimeout(() => {
-            tooltipManager.hide();
+            if (!tooltipManager.isMouseOverTooltip && !tooltipManager.isMouseOverIcon) {
+                tooltipManager.hide();
+            }
         }, 50);
     });
 
-    // Add click behavior too for better reliability
+    // Add click behavior for better accessibility
     element.addEventListener("click", (e) => {
         e.stopPropagation();
         e.preventDefault();
+
+        // Immediately interrupt any hiding operation in progress
+        tooltipManager.interruptHiding();
+
+        // Show tooltip immediately on click without delay
         tooltipManager.show(element, username, mediaId);
+
+        // Keep tooltip visible for a longer time on click
+        tooltipManager.stableHoverDelay = 1000; // 1 second delay after click
+
+        // Reset to normal delay after this tooltip session
+        setTimeout(() => {
+            tooltipManager.stableHoverDelay = 300;
+        }, 2000);
     });
 }
 
-// Format time ago
+/**
+ * Formats a date into a human-readable "time ago" string.
+ *
+ * @param {Date} date - The date to format
+ * @returns {string} Human-readable time difference
+ */
 function getTimeAgo(date) {
     const now = new Date();
     const diffMs = now - date;
@@ -813,7 +1167,13 @@ function getTimeAgo(date) {
     }
 }
 
-// Fetch user comment - utilizzato per la scansione iniziale
+/**
+ * Fetches a user's comment for a specific media from the Anilist API.
+ *
+ * @param {string} username - The username
+ * @param {number} mediaId - The ID of the anime/manga
+ * @returns {Promise<string>} The comment text or empty string
+ */
 async function fetchUserComment(username, mediaId) {
     const query = `
         query ($userName: String, $mediaId: Int) {
@@ -835,7 +1195,7 @@ async function fetchUserComment(username, mediaId) {
             body: JSON.stringify({ query, variables })
         });
 
-        // Se la risposta non è ok, restituisci stringa vuota
+        // If response is not ok, return empty string
         if (!response.ok) {
             if (response.status === 429) {
                 isRateLimited = true;
@@ -848,21 +1208,24 @@ async function fetchUserComment(username, mediaId) {
 
         const data = await response.json();
 
-        // Se ci sono errori, restituisci stringa vuota
+        // If there are errors, return empty string
         if (data.errors) {
             return "";
         }
 
         // Success
-        const notes = data.data?.MediaList?.notes || "";
-        return notes;
+        return data.data?.MediaList?.notes || "";
     } catch (error) {
-        // Per qualsiasi errore, restituisci stringa vuota
+        // For any error, return empty string
         return "";
     }
 }
 
-// Extract media ID from URL
+/**
+ * Extracts the media ID and type from the current URL.
+ *
+ * @returns {Object|null} Object with id and type properties, or null if not found
+ */
 function extractMediaIdFromUrl() {
     // Check for anime URLs
     let urlMatch = window.location.pathname.match(/\/anime\/(\d+)/);
@@ -903,17 +1266,28 @@ function extractMediaIdFromUrl() {
     return null;
 }
 
-// Improved cache storage with error handling - APPROCCIO ALTERNATIVO
+/**
+ * Tries to save the comment cache to localStorage.
+ * Uses an alternative approach to avoid "Extension context invalidated" errors.
+ *
+ * @returns {boolean} True if successful, false otherwise
+ */
 function trySaveCacheToStorage() {
-    // Approccio con localStorage per evitare l'errore "Extension context invalidated"
+    // Alternative approach using localStorage to avoid "Extension context invalidated" error
     try {
         localStorage.setItem('anilist_comment_cache', JSON.stringify(commentCache));
+        return true;
     } catch (e) {
-        // Ignora silenziosamente
+        // Silently ignore errors
+        return false;
     }
 }
 
-// Load cache from storage with fallback - APPROCCIO ALTERNATIVO
+/**
+ * Loads the comment cache from localStorage with fallback handling.
+ *
+ * @returns {boolean} True if cache was loaded successfully, false otherwise
+ */
 function loadCacheFromStorage() {
     try {
         const cached = localStorage.getItem('anilist_comment_cache');
@@ -925,20 +1299,22 @@ function loadCacheFromStorage() {
                     return true;
                 }
             } catch (e) {
-                // Se il JSON è corrotto, inizializziamo una cache vuota
+                // If JSON is corrupted, initialize empty cache
                 commentCache = {};
             }
         }
     } catch (e) {
-        // Se fallisce anche localStorage, inizializziamo una cache vuota
+        // If localStorage fails, initialize empty cache
         commentCache = {};
     }
     return false;
 }
 
-// Initialization events
+/**
+ * Event handlers for page initialization
+ */
 document.addEventListener('DOMContentLoaded', () => {
-    // Carica cache appena possibile
+    // Load cache as soon as possible
     loadCacheFromStorage();
     setTimeout(initialize, 150);
 });
@@ -946,24 +1322,28 @@ document.addEventListener('DOMContentLoaded', () => {
 // Fallback for pages that load slowly
 window.addEventListener('load', () => {
     if (!isInitialized) {
-        // Assicurati che la cache sia caricata prima di inizializzare
+        // Ensure cache is loaded before initializing
         loadCacheFromStorage();
         setTimeout(initialize, 300);
     }
 });
 
-// Cache periodic save
+/**
+ * Cache periodic save
+ */
 let saveInterval = setInterval(() => {
     try {
         if (Object.keys(commentCache).length > 0) {
             trySaveCacheToStorage();
         }
     } catch (e) {
-        // Ignora silenziosamente
+        // Silently ignore errors
     }
 }, 300000); // Every 5 minutes
 
-// Clean up on unload
+/**
+ * Clean up on unload
+ */
 window.addEventListener('beforeunload', () => {
     clearInterval(saveInterval);
     if (Object.keys(commentCache).length > 0) {
@@ -971,6 +1351,8 @@ window.addEventListener('beforeunload', () => {
     }
 });
 
-// Immediate initialization after cache load
+/**
+ * Immediate initialization after cache load
+ */
 loadCacheFromStorage();
 setTimeout(initialize, 50);
