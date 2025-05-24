@@ -1,19 +1,18 @@
 /**
- * Anilist Hover Comments - Content Script
+ * Anilist Hover Comments - Clean Rewrite
  *
  * This script enhances Anilist anime/manga pages by displaying user comments via
- * a hover interface. It identifies user entries in the "Following" section and
- * provides a non-intrusive way to view their comments without visiting their profiles.
+ * a hover interface. Rewritten for simplicity and reliability.
  *
  * Features:
  * - Shows a comment icon next to user entries with comments
  * - Displays comments in a tooltip on hover or click
- * - Implements a caching system to reduce API requests
+ * - Implements positive and negative caching to minimize API requests
  * - Handles SPA (Single Page Application) navigation
- * - Implements rate limiting to avoid API restrictions
+ * - Silent error handling without console pollution
  *
  * @author ExAstra
- * @version 1.2.0
+ * @version 1.3.1
  * @see https://github.com/rikymarche-ctrl/anilist-extension
  */
 
@@ -21,15 +20,17 @@
  * Configuration constants for application behavior
  */
 const CONFIG = {
-    CACHE_MAX_AGE: 24 * 60 * 60 * 1000, // 24 hours
-    MAX_REQUESTS_PER_MINUTE: 10, // Conservative to avoid rate limiting
-    RATE_LIMIT_DURATION: 60000, // 1 minute in milliseconds
-    BATCH_DELAY: 200, // Delay between API requests in ms
+    CACHE_MAX_AGE: 24 * 60 * 60 * 1000, // 24 hours for comments
+    NEGATIVE_CACHE_AGE: 60 * 60 * 1000, // 1 hour for "no comment" entries
+    MAX_REQUESTS_PER_MINUTE: 10,
+    RATE_LIMIT_DURATION: 60000,
+    BATCH_DELAY: 200,
     TOOLTIP_SHOW_DELAY: 50,
-    TOOLTIP_HIDE_DELAY: 1000, // Increased to 1 second for easier mouse movement
+    TOOLTIP_HIDE_DELAY: 1000,
     AUTO_HIDE_CHECK_INTERVAL: 500,
-    CACHE_SAVE_INTERVAL: 300000, // 5 minutes
-    FONTAWESOME_URL: 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css'
+    CACHE_SAVE_INTERVAL: 300000,
+    FONTAWESOME_URL: 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css',
+    DEBUG_MODE: false
 };
 
 /**
@@ -45,7 +46,52 @@ const SELECTORS = {
 };
 
 /**
- * Main application class that manages the entire extension
+ * Silent logger that only shows output in debug mode
+ */
+class Logger {
+    static log(message, ...args) {
+        if (CONFIG.DEBUG_MODE) {
+            console.log(`[AnilistExt] ${message}`, ...args);
+        }
+    }
+
+    static warn(message, ...args) {
+        if (CONFIG.DEBUG_MODE) {
+            console.warn(`[AnilistExt] ${message}`, ...args);
+        }
+        this.storeMessage('warn', message, args);
+    }
+
+    static error(message, ...args) {
+        if (CONFIG.DEBUG_MODE) {
+            console.error(`[AnilistExt] ${message}`, ...args);
+        }
+        this.storeMessage('error', message, args);
+    }
+
+    static storeMessage(level, message, args) {
+        if (!window.anilistExtensionLogs) {
+            window.anilistExtensionLogs = [];
+        }
+        window.anilistExtensionLogs.push({
+            level,
+            message,
+            args,
+            timestamp: new Date().toISOString()
+        });
+
+        if (window.anilistExtensionLogs.length > 50) {
+            window.anilistExtensionLogs = window.anilistExtensionLogs.slice(-50);
+        }
+    }
+
+    static showLogs() {
+        console.table(window.anilistExtensionLogs || []);
+    }
+}
+
+/**
+ * Main application class
  */
 class AnilistHoverComments {
     constructor() {
@@ -56,14 +102,18 @@ class AnilistHoverComments {
         this.cacheManager = new CacheManager();
         this.apiManager = new ApiManager();
         this.tooltipManager = TooltipManager.getInstance();
-        this.iconManager = new IconManager();
         this.cleanup = [];
 
-        console.log("Anilist Hover Comments: Initialized!");
+        // Icon persistence tracking
+        this.isFirstTimeLoad = false;
+        this.usersWithoutCache = 0;
+        this.totalUsers = 0;
+
+        Logger.log("Anilist Hover Comments: Initialized!");
     }
 
     /**
-     * Initializes the extension
+     * Main initialization
      */
     async init() {
         try {
@@ -79,19 +129,19 @@ class AnilistHoverComments {
             await this.cacheManager.load();
             this.setupUrlObserver();
 
-            // New approach: Start monitoring immediately for lazy-loaded Following section
+            // Start monitoring for Following section
             this.startFollowingSectionWatcher(media.id);
 
         } catch (error) {
-            console.warn('Anilist Extension: Initialization failed:', error.message);
+            Logger.error('Initialization failed:', error.message);
         }
     }
 
     /**
-     * Starts watching for the Following section to be lazy-loaded
+     * Watch for Following section to appear
      */
     startFollowingSectionWatcher(mediaId) {
-        console.log('Starting Following section watcher');
+        Logger.log('Starting Following section watcher');
 
         // Try immediate check first
         this.checkForFollowingSection(mediaId);
@@ -109,7 +159,6 @@ class AnilistHoverComments {
                 if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
                     for (const node of mutation.addedNodes) {
                         if (node.nodeType === Node.ELEMENT_NODE) {
-                            // Check if this node or its children contain Following section or user links
                             if (this.nodeContainsFollowingContent(node)) {
                                 foundNewContent = true;
                                 break;
@@ -121,99 +170,73 @@ class AnilistHoverComments {
             }
 
             if (foundNewContent) {
-                console.log('MutationObserver detected Following section content');
-                // Small delay to ensure content is fully rendered
+                Logger.log('MutationObserver detected Following section content');
                 setTimeout(() => {
                     this.checkForFollowingSection(mediaId);
                 }, 100);
             }
         });
 
-        // Monitor the entire document for changes
         observer.observe(document.body, {
             childList: true,
             subtree: true
         });
 
-        // Also set up periodic checks as backup
-        this.setupPeriodicChecks(mediaId);
-
         // Clean up observer after reasonable time
         setTimeout(() => {
             if (!this.isInitialized) {
-                console.log('Following section watcher timeout');
+                Logger.log('Following section watcher timeout');
             }
             observer.disconnect();
         }, 15000);
     }
 
     /**
-     * Checks if a node contains Following section content
+     * Check if node contains Following content
      */
     nodeContainsFollowingContent(node) {
-        // Check if it's the Following section itself
         if (node.matches && node.matches(SELECTORS.FOLLOWING_SECTION)) {
             return true;
         }
 
-        // Check if it contains Following section
         if (node.querySelector && node.querySelector(SELECTORS.FOLLOWING_SECTION)) {
             return true;
         }
 
-        // Check if it's a user link
         if (node.matches && node.matches(SELECTORS.USER_LINKS)) {
             return true;
         }
 
-        // Check if it contains user links
         if (node.querySelector && node.querySelector(SELECTORS.USER_LINKS)) {
             return true;
         }
 
-        // Check if it's an h2 with "Following" text
         return node.tagName === 'H2' && node.textContent.includes('Following');
     }
 
     /**
-     * Sets up periodic checks as backup
-     */
-    setupPeriodicChecks(mediaId) {
-        const checkIntervals = [500, 1000, 2000, 4000, 8000]; // Progressive delays
-
-        checkIntervals.forEach(delay => {
-            setTimeout(() => {
-                if (!this.isInitialized) {
-                    console.log(`Periodic check at ${delay}ms`);
-                    this.checkForFollowingSection(mediaId);
-                }
-            }, delay);
-        });
-    }
-
-    /**
-     * Checks for Following section and processes it if found
+     * Check for Following section and process if found
      */
     async checkForFollowingSection(mediaId) {
         const followingSection = this.findFollowingSection();
         if (!followingSection) {
-            console.log('Following section not found');
+            Logger.log('Following section not found');
             return false;
         }
 
         const userLinks = followingSection.querySelectorAll(SELECTORS.USER_LINKS);
         if (userLinks.length === 0) {
-            console.log('Following section found but no user links yet');
+            Logger.log('Following section found but no user links yet');
             return false;
         }
 
-        console.log(`Found Following section with ${userLinks.length} user links - processing immediately`);
+        Logger.log(`Found Following section with ${userLinks.length} user links - processing`);
         const success = await this.processFollowingSection(mediaId);
 
         if (success) {
             this.isInitialized = true;
             this.lastMediaId = mediaId;
-            console.log('Extension successfully initialized');
+            Logger.log('Extension successfully initialized');
             return true;
         }
 
@@ -221,7 +244,7 @@ class AnilistHoverComments {
     }
 
     /**
-     * Loads FontAwesome if not already present
+     * Load FontAwesome if not already present
      */
     async loadFontAwesome() {
         if (document.querySelector(SELECTORS.FONTAWESOME_LINK)) return;
@@ -233,13 +256,13 @@ class AnilistHoverComments {
             link.crossOrigin = 'anonymous';
             link.referrerPolicy = 'no-referrer';
             link.onload = resolve;
-            link.onerror = resolve; // Continue even if FontAwesome fails
+            link.onerror = resolve;
             document.head.appendChild(link);
         });
     }
 
     /**
-     * Processes the following section and sets up comment icons
+     * Process the following section and set up comment icons
      */
     async processFollowingSection(mediaId) {
         const followingSection = this.findFollowingSection();
@@ -248,7 +271,13 @@ class AnilistHoverComments {
         const userLinks = followingSection.querySelectorAll(SELECTORS.USER_LINKS);
         if (userLinks.length === 0) return false;
 
-        console.log(`Processing ${userLinks.length} users for media ${mediaId}`);
+        Logger.log(`Processing ${userLinks.length} users for media ${mediaId}`);
+
+        // Reset counters for soft refresh tracking
+        this.usersWithoutCache = 0;
+        this.totalUsers = userLinks.length;
+        this.isFirstTimeLoad = false;
+
         let iconsAdded = 0;
 
         for (const link of userLinks) {
@@ -259,14 +288,20 @@ class AnilistHoverComments {
             }
         }
 
-        console.log(`Added ${iconsAdded} comment icons immediately from cache`);
+        Logger.log(`Added ${iconsAdded} comment icons from cache`);
 
-        // Return true if we found and processed users (even if no icons added yet)
+        // Start API completion monitoring for first-time loads
+        if (this.usersWithoutCache === this.totalUsers && this.totalUsers > 0) {
+            this.isFirstTimeLoad = true;
+            Logger.log('First-time load detected - will RE-PROCESS entire following section after API completion');
+            this.scheduleCompleteReprocessing(mediaId);
+        }
+
         return userLinks.length > 0;
     }
 
     /**
-     * Finds the following section in the DOM
+     * Find the following section in the DOM
      */
     findFollowingSection() {
         // Try multiple approaches to find the section
@@ -284,7 +319,7 @@ class AnilistHoverComments {
     }
 
     /**
-     * Finds following section by looking for H2 title
+     * Find following section by looking for H2 title
      */
     findByTitle() {
         const h2Elements = document.querySelectorAll('h2');
@@ -303,8 +338,97 @@ class AnilistHoverComments {
     }
 
     /**
-     * Extracts username from user link
+     * Start monitoring and re-adding icons as needed (ALWAYS enabled for reliability)
      */
+    startIconPersistenceMonitoring(mediaId) {
+        Logger.log('Starting icon persistence monitoring for media', mediaId);
+
+        let monitoringAttempts = 0;
+        const maxAttempts = 20; // Back to 20 attempts since we're starting after APIs
+
+        const monitorIcons = () => {
+            monitoringAttempts++;
+
+            try {
+                const followingSection = this.findFollowingSection();
+                if (!followingSection) {
+                    Logger.log('Following section not found, stopping monitoring');
+                    return;
+                }
+
+                const userLinks = followingSection.querySelectorAll(SELECTORS.USER_LINKS);
+                const existingIcons = followingSection.querySelectorAll(SELECTORS.COMMENT_ICON);
+
+                let iconsAdded = 0;
+                let expectedIcons = 0;
+
+                // Check each user and re-add icon if needed
+                for (const link of userLinks) {
+                    const username = this.extractUsername(link);
+                    if (username) {
+                        const cacheKey = `${username}-${mediaId}`;
+                        const cachedComment = this.cacheManager.get(cacheKey);
+
+                        // If user should have an icon but doesn't
+                        if (cachedComment && cachedComment.hasContent()) {
+                            expectedIcons++;
+
+                            const hasIcon = link.querySelector(SELECTORS.COMMENT_ICON);
+                            if (!hasIcon) {
+                                Logger.log(`Re-adding missing icon for ${username} (attempt ${monitoringAttempts})`);
+                                this.addIcon(link, username, mediaId);
+                                iconsAdded++;
+                            }
+                        }
+                    }
+                }
+
+                Logger.log(`Monitor attempt ${monitoringAttempts}: Expected ${expectedIcons}, Found ${existingIcons.length}, Added ${iconsAdded}`);
+
+                // Continue monitoring if we're still missing icons or just added some
+                if (monitoringAttempts < maxAttempts && (existingIcons.length < expectedIcons || iconsAdded > 0)) {
+                    setTimeout(monitorIcons, 500); // Check every 500ms
+                } else {
+                    Logger.log(`Icon persistence monitoring completed after ${monitoringAttempts} attempts`);
+
+                    // Final validation
+                    const finalIcons = followingSection.querySelectorAll(SELECTORS.COMMENT_ICON);
+                    Logger.log(`Final result: ${finalIcons.length} icons persistent`);
+                }
+
+            } catch (error) {
+                Logger.error('Icon monitoring failed:', error.message);
+            }
+        };
+
+        // Start monitoring immediately
+        monitorIcons();
+    }
+
+    /**
+     * Monitor API completion and START icon monitoring only after completion
+     */
+    scheduleApiCompletionMonitoring(mediaId) {
+        Logger.log('Waiting for API completion before starting icon monitoring...');
+
+        const checkApiCompletion = () => {
+            const pendingRequests = this.apiManager.queue.length + this.apiManager.pendingRequests.size;
+
+            if (pendingRequests === 0) {
+                Logger.log('API requests completed - NOW starting icon monitoring');
+                // Give APIs a moment to update cache, then start monitoring
+                setTimeout(() => {
+                    this.startIconPersistenceMonitoring(mediaId);
+                }, 500);
+            } else {
+                Logger.log(`${pendingRequests} API requests still pending - checking again in 1s`);
+                setTimeout(checkApiCompletion, 1000);
+            }
+        };
+
+        // Start checking after a brief delay
+        setTimeout(checkApiCompletion, 1000);
+    }
     extractUsername(link) {
         const href = link.getAttribute('href');
         if (!href) return null;
@@ -312,7 +436,7 @@ class AnilistHoverComments {
     }
 
     /**
-     * Processes a single user entry
+     * Process a single user entry with negative caching
      */
     async processUser(entry, username, mediaId) {
         // Skip if already processed
@@ -322,19 +446,25 @@ class AnilistHoverComments {
         const cachedComment = this.cacheManager.get(cacheKey);
         let iconAdded = false;
 
-        // If we have any cached content (even if expired), show icon immediately
+        // Check if user has NO cache at all (for first-time load detection)
+        if (!cachedComment) {
+            this.usersWithoutCache++;
+            Logger.log(`User ${username} has no cache - incrementing counter to ${this.usersWithoutCache}`);
+        }
+
+        // If we have cached content, show icon immediately
         if (cachedComment && cachedComment.hasContent()) {
-            this.iconManager.addIcon(entry, username, mediaId);
+            this.addIcon(entry, username, mediaId);
             iconAdded = true;
-            console.log(`Icon added immediately for ${username} (cached)`);
+            Logger.log(`Icon added immediately for ${username} (cached)`);
         }
 
         // If cache is invalid or doesn't exist, make API request
-        if (!cachedComment || !cachedComment.isValid()) {
+        if (!cachedComment || (!cachedComment.isValid() && !cachedComment.isNegativeCacheValid())) {
             this.apiManager.queueRequest(entry, username, mediaId, (hasContent) => {
                 if (hasContent && !entry.querySelector(SELECTORS.COMMENT_ICON_COLUMN)) {
-                    this.iconManager.addIcon(entry, username, mediaId);
-                    console.log(`Icon added via API for ${username}`);
+                    this.addIcon(entry, username, mediaId);
+                    Logger.log(`Icon added via API for ${username}`);
                 }
             });
         }
@@ -343,423 +473,7 @@ class AnilistHoverComments {
     }
 
     /**
-     * Sets up URL change observer for SPA navigation
-     */
-    setupUrlObserver() {
-        // Clean up existing observer
-        if (this.urlObserver) {
-            this.urlObserver.disconnect();
-        }
-
-        this.urlObserver = new MutationObserver(this.handleUrlChange.bind(this));
-        this.urlObserver.observe(document, {
-            childList: true,
-            subtree: true
-        });
-
-        // Add event listeners for navigation
-        const navigationEvents = ['popstate', 'hashchange'];
-        navigationEvents.forEach(event => {
-            const handler = () => this.handleUrlChange();
-            window.addEventListener(event, handler);
-            this.cleanup.push(() => window.removeEventListener(event, handler));
-        });
-    }
-
-    /**
-     * Handles URL changes for SPA navigation
-     */
-    handleUrlChange() {
-        const currentUrl = location.href;
-        const media = this.extractMediaFromUrl();
-        const currentMediaId = media?.id;
-
-        if (currentUrl !== this.lastUrl || currentMediaId !== this.lastMediaId) {
-            console.log('URL/Media change detected, reinitializing');
-            this.lastUrl = currentUrl;
-            this.lastMediaId = currentMediaId;
-            this.isInitialized = false;
-
-            if (currentMediaId) {
-                // Debounce initialization
-                clearTimeout(this.initTimeout);
-                this.initTimeout = setTimeout(() => this.init(), 100);
-            }
-        }
-    }
-
-    /**
-     * Extracts media information from current URL
-     */
-    extractMediaFromUrl() {
-        const patterns = [
-            /\/anime\/(\d+)/,
-            /\/manga\/(\d+)/,
-            /\/(anime|manga)\/.*?\/(\d+)/
-        ];
-
-        for (const pattern of patterns) {
-            const match = window.location.pathname.match(pattern);
-            if (match) {
-                const id = parseInt(match[match.length - 1] || match[1]);
-                if (id > 0) {
-                    return {
-                        id,
-                        type: match[1]?.toUpperCase() || (pattern.source.includes('anime') ? 'ANIME' : 'MANGA')
-                    };
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Resets extension state
-     */
-    resetState() {
-        // Remove existing tooltip
-        const tooltip = document.querySelector(SELECTORS.TOOLTIP);
-        if (tooltip) tooltip.remove();
-
-        this.apiManager.reset();
-    }
-
-    /**
-     * Cleans up resources when extension is destroyed
-     */
-    destroy() {
-        if (this.urlObserver) {
-            this.urlObserver.disconnect();
-        }
-
-        this.cleanup.forEach(cleanupFn => cleanupFn());
-        this.cleanup = [];
-
-        this.cacheManager.destroy();
-        this.apiManager.destroy();
-        this.tooltipManager.destroy();
-    }
-}
-
-/**
- * Cache manager class for handling comment storage and retrieval
- */
-class CacheManager {
-    constructor() {
-        this.cache = {};
-        this.saveInterval = null;
-    }
-
-    /**
-     * Loads cache from localStorage
-     */
-    async load() {
-        try {
-            const cached = localStorage.getItem('anilist_comment_cache');
-            if (cached) {
-                const parsedCache = JSON.parse(cached);
-                if (parsedCache && typeof parsedCache === 'object') {
-                    this.cache = parsedCache;
-                }
-            }
-        } catch (error) {
-            console.warn('Cache loading failed:', error.message);
-            this.cache = {};
-        }
-
-        this.startPeriodicSave();
-    }
-
-    /**
-     * Gets cached comment data
-     */
-    get(key) {
-        const data = this.cache[key];
-        if (!data) return null;
-
-        return new CachedComment(data.content, data.timestamp);
-    }
-
-    /**
-     * Sets cached comment data
-     */
-    set(key, content) {
-        this.cache[key] = {
-            content: content || '',
-            timestamp: Date.now()
-        };
-    }
-
-    /**
-     * Saves cache to localStorage
-     */
-    save() {
-        try {
-            localStorage.setItem('anilist_comment_cache', JSON.stringify(this.cache));
-            return true;
-        } catch (error) {
-            console.warn('Cache saving failed:', error.message);
-            return false;
-        }
-    }
-
-    /**
-     * Starts periodic cache saving
-     */
-    startPeriodicSave() {
-        if (this.saveInterval) {
-            clearInterval(this.saveInterval);
-        }
-
-        this.saveInterval = setInterval(() => {
-            if (Object.keys(this.cache).length > 0) {
-                this.save();
-            }
-        }, CONFIG.CACHE_SAVE_INTERVAL);
-    }
-
-    /**
-     * Cleans up resources
-     */
-    destroy() {
-        if (this.saveInterval) {
-            clearInterval(this.saveInterval);
-            this.saveInterval = null;
-        }
-        this.save(); // Final save
-    }
-}
-
-/**
- * Represents a cached comment with validation methods
- */
-class CachedComment {
-    constructor(content, timestamp) {
-        this.content = content;
-        this.timestamp = timestamp;
-    }
-
-    /**
-     * Checks if cache is still valid
-     */
-    isValid() {
-        if (!this.timestamp) return false;
-        return (Date.now() - this.timestamp) < CONFIG.CACHE_MAX_AGE;
-    }
-
-    /**
-     * Checks if comment has content
-     */
-    hasContent() {
-        return this.content && this.content.trim() !== '';
-    }
-
-    /**
-     * Gets age of cache in milliseconds
-     */
-    getAge() {
-        return Date.now() - this.timestamp;
-    }
-
-    /**
-     * Gets formatted timestamp
-     */
-    getFormattedAge() {
-        return this.formatTimeAgo(new Date(this.timestamp));
-    }
-
-    /**
-     * Formats time difference into human readable string
-     */
-    formatTimeAgo(date) {
-        const now = new Date();
-        const diffMs = now - date;
-        const diffSec = Math.floor(diffMs / 1000);
-        const diffMin = Math.floor(diffSec / 60);
-        const diffHour = Math.floor(diffMin / 60);
-        const diffDay = Math.floor(diffHour / 24);
-
-        if (diffSec < 30) return "just now";
-        if (diffSec < 60) return `${diffSec} seconds ago`;
-        if (diffMin < 60) return `${diffMin} minute${diffMin !== 1 ? 's' : ''} ago`;
-        if (diffHour < 24) return `${diffHour} hour${diffHour !== 1 ? 's' : ''} ago`;
-        if (diffDay < 30) return `${diffDay} day${diffDay !== 1 ? 's' : ''} ago`;
-
-        const options = { day: 'numeric', month: 'short', year: 'numeric' };
-        return `on ${date.toLocaleDateString(undefined, options)}`;
-    }
-}
-
-/**
- * API manager class for handling rate limiting and API requests
- */
-class ApiManager {
-    constructor() {
-        this.queue = [];
-        this.isProcessing = false;
-        this.requestCount = 0;
-        this.lastReset = Date.now();
-        this.isRateLimited = false;
-    }
-
-    /**
-     * Queues an API request
-     */
-    queueRequest(entry, username, mediaId, callback) {
-        this.queue.push({ entry, username, mediaId, callback });
-
-        if (!this.isProcessing) {
-            this.processQueue();
-        }
-    }
-
-    /**
-     * Processes the API request queue
-     */
-    async processQueue() {
-        if (this.queue.length === 0) {
-            this.isProcessing = false;
-            return;
-        }
-
-        this.isProcessing = true;
-
-        while (this.queue.length > 0) {
-            if (!this.checkRateLimit()) {
-                // Wait for rate limit reset
-                setTimeout(() => this.processQueue(), CONFIG.RATE_LIMIT_DURATION);
-                return;
-            }
-
-            const request = this.queue.shift();
-            await this.processRequest(request);
-
-            // Add delay between requests
-            if (this.queue.length > 0) {
-                await this.delay(CONFIG.BATCH_DELAY);
-            }
-        }
-
-        this.isProcessing = false;
-    }
-
-    /**
-     * Processes a single API request
-     */
-    async processRequest(request) {
-        try {
-            const { username, mediaId, callback } = request;
-            const comment = await this.fetchUserComment(username, mediaId);
-
-            // Update cache
-            const cacheKey = `${username}-${mediaId}`;
-            app.cacheManager.set(cacheKey, comment);
-
-            // Invoke callback
-            if (callback) {
-                callback(comment && comment.trim() !== '');
-            }
-
-        } catch (error) {
-            console.warn(`API request failed for ${request.username}:`, error.message);
-        }
-    }
-
-    /**
-     * Checks and manages rate limiting
-     */
-    checkRateLimit() {
-        const now = Date.now();
-
-        // Reset counter if a minute has passed
-        if (now - this.lastReset > CONFIG.RATE_LIMIT_DURATION) {
-            this.requestCount = 0;
-            this.lastReset = now;
-            this.isRateLimited = false;
-        }
-
-        // Check if we've exceeded the limit
-        if (this.requestCount >= CONFIG.MAX_REQUESTS_PER_MINUTE) {
-            this.isRateLimited = true;
-            return false;
-        }
-
-        this.requestCount++;
-        return true;
-    }
-
-    /**
-     * Fetches user comment from Anilist API
-     */
-    async fetchUserComment(username, mediaId) {
-        const query = `
-            query ($userName: String, $mediaId: Int) {
-                MediaList(userName: $userName, mediaId: $mediaId) {
-                    notes
-                }
-            }
-        `;
-
-        const variables = { userName: username, mediaId: parseInt(mediaId) };
-
-        const response = await fetch("https://graphql.anilist.co", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            body: JSON.stringify({ query, variables })
-        });
-
-        if (!response.ok) {
-            if (response.status === 429) {
-                this.isRateLimited = true;
-            }
-            throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-
-        if (data.errors) {
-            throw new Error('GraphQL errors');
-        }
-
-        return data.data?.MediaList?.notes || "";
-    }
-
-    /**
-     * Utility delay function
-     */
-    delay(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
-
-    /**
-     * Resets API manager state
-     */
-    reset() {
-        this.queue = [];
-        this.isProcessing = false;
-        this.requestCount = 0;
-        this.lastReset = Date.now();
-        this.isRateLimited = false;
-    }
-
-    /**
-     * Cleans up resources
-     */
-    destroy() {
-        this.reset();
-    }
-}
-
-/**
- * Icon manager class for handling comment icon display
- */
-class IconManager {
-    /**
-     * Adds a comment icon to user entry
+     * Add a comment icon to user entry (from original code)
      */
     addIcon(entry, username, mediaId) {
         // Skip if icon already exists
@@ -776,7 +490,7 @@ class IconManager {
     }
 
     /**
-     * Creates icon container element
+     * Create icon container element (from original code)
      */
     createIconContainer(username, mediaId) {
         const container = document.createElement('div');
@@ -787,7 +501,7 @@ class IconManager {
     }
 
     /**
-     * Creates comment icon element
+     * Create comment icon element (from original code)
      */
     createIcon() {
         const icon = document.createElement('i');
@@ -796,7 +510,7 @@ class IconManager {
     }
 
     /**
-     * Positions icon within entry
+     * Position icon within entry (from original code)
      */
     positionIcon(entry, iconContainer) {
         entry.style.position = 'relative';
@@ -804,7 +518,7 @@ class IconManager {
     }
 
     /**
-     * Sets up event listeners for icon
+     * Set up event listeners for icon (from original code)
      */
     setupIconEvents(iconContainer, username, mediaId) {
         const tooltipManager = TooltipManager.getInstance();
@@ -847,10 +561,390 @@ class IconManager {
         iconContainer.addEventListener("mouseleave", iconLeaveHandler);
         iconContainer.addEventListener("click", iconClickHandler);
     }
+
+    /**
+     * Set up URL change observer for SPA navigation
+     */
+    setupUrlObserver() {
+        // Clean up existing observer
+        if (this.urlObserver) {
+            this.urlObserver.disconnect();
+        }
+
+        this.urlObserver = new MutationObserver(this.handleUrlChange.bind(this));
+        this.urlObserver.observe(document, {
+            childList: true,
+            subtree: true
+        });
+
+        // Add event listeners for navigation
+        const navigationEvents = ['popstate', 'hashchange'];
+        navigationEvents.forEach(event => {
+            const handler = () => this.handleUrlChange();
+            window.addEventListener(event, handler);
+            this.cleanup.push(() => window.removeEventListener(event, handler));
+        });
+    }
+
+    /**
+     * Handle URL changes for SPA navigation
+     */
+    handleUrlChange() {
+        const currentUrl = location.href;
+        const media = this.extractMediaFromUrl();
+        const currentMediaId = media?.id;
+
+        if (currentUrl !== this.lastUrl || currentMediaId !== this.lastMediaId) {
+            Logger.log('URL/Media change detected, reinitializing');
+            this.lastUrl = currentUrl;
+            this.lastMediaId = currentMediaId;
+            this.isInitialized = false;
+
+            if (currentMediaId) {
+                // Debounce initialization
+                clearTimeout(this.initTimeout);
+                this.initTimeout = setTimeout(() => this.init(), 100);
+            }
+        }
+    }
+
+    /**
+     * Extract media information from current URL
+     */
+    extractMediaFromUrl() {
+        const patterns = [
+            /\/anime\/(\d+)/,
+            /\/manga\/(\d+)/,
+            /\/(anime|manga)\/.*?\/(\d+)/
+        ];
+
+        for (const pattern of patterns) {
+            const match = window.location.pathname.match(pattern);
+            if (match) {
+                const id = parseInt(match[match.length - 1] || match[1]);
+                if (id > 0) {
+                    return {
+                        id,
+                        type: match[1]?.toUpperCase() || (pattern.source.includes('anime') ? 'ANIME' : 'MANGA')
+                    };
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Reset extension state
+     */
+    resetState() {
+        // Reset persistence tracking
+        this.isFirstTimeLoad = false;
+        this.usersWithoutCache = 0;
+        this.totalUsers = 0;
+
+        // Remove existing tooltip
+        const tooltip = document.querySelector(SELECTORS.TOOLTIP);
+        if (tooltip) tooltip.remove();
+
+        this.apiManager.reset();
+    }
+
+    /**
+     * Clean up resources when extension is destroyed
+     */
+    destroy() {
+        if (this.urlObserver) {
+            this.urlObserver.disconnect();
+        }
+
+        this.cleanup.forEach(cleanupFn => cleanupFn());
+        this.cleanup = [];
+
+        this.cacheManager.destroy();
+        this.apiManager.destroy();
+        this.tooltipManager.destroy();
+    }
 }
 
 /**
- * Enhanced Tooltip Manager with improved stability and performance
+ * Enhanced cache manager with negative caching
+ */
+class CacheManager {
+    constructor() {
+        this.cache = {};
+        this.saveInterval = null;
+    }
+
+    async load() {
+        try {
+            const cached = localStorage.getItem('anilist_comment_cache');
+            if (cached) {
+                const parsedCache = JSON.parse(cached);
+                if (parsedCache && typeof parsedCache === 'object') {
+                    this.cache = parsedCache;
+                }
+            }
+        } catch (error) {
+            Logger.warn('Cache loading failed:', error.message);
+            this.cache = {};
+        }
+
+        this.startPeriodicSave();
+    }
+
+    get(key) {
+        const data = this.cache[key];
+        if (!data) return null;
+        return new CachedComment(data.content, data.timestamp);
+    }
+
+    set(key, content) {
+        this.cache[key] = {
+            content: content || '',
+            timestamp: Date.now()
+        };
+    }
+
+    save() {
+        try {
+            localStorage.setItem('anilist_comment_cache', JSON.stringify(this.cache));
+            return true;
+        } catch (error) {
+            Logger.warn('Cache saving failed:', error.message);
+            return false;
+        }
+    }
+
+    startPeriodicSave() {
+        if (this.saveInterval) {
+            clearInterval(this.saveInterval);
+        }
+
+        this.saveInterval = setInterval(() => {
+            if (Object.keys(this.cache).length > 0) {
+                this.save();
+            }
+        }, CONFIG.CACHE_SAVE_INTERVAL);
+    }
+
+    destroy() {
+        if (this.saveInterval) {
+            clearInterval(this.saveInterval);
+            this.saveInterval = null;
+        }
+        this.save();
+    }
+}
+
+/**
+ * Cached comment with negative caching support
+ */
+class CachedComment {
+    constructor(content, timestamp) {
+        this.content = content;
+        this.timestamp = timestamp;
+    }
+
+    isValid() {
+        if (!this.timestamp) return false;
+        return (Date.now() - this.timestamp) < CONFIG.CACHE_MAX_AGE;
+    }
+
+    isNegativeCacheValid() {
+        if (!this.timestamp || this.hasContent()) return false;
+        return (Date.now() - this.timestamp) < CONFIG.NEGATIVE_CACHE_AGE;
+    }
+
+    hasContent() {
+        return this.content && this.content.trim() !== '';
+    }
+
+    getAge() {
+        return Date.now() - this.timestamp;
+    }
+
+    getFormattedAge() {
+        return this.formatTimeAgo(new Date(this.timestamp));
+    }
+
+    formatTimeAgo(date) {
+        const now = new Date();
+        const diffMs = now - date;
+        const diffSec = Math.floor(diffMs / 1000);
+        const diffMin = Math.floor(diffSec / 60);
+        const diffHour = Math.floor(diffMin / 60);
+        const diffDay = Math.floor(diffHour / 24);
+
+        if (diffSec < 30) return "just now";
+        if (diffSec < 60) return `${diffSec} seconds ago`;
+        if (diffMin < 60) return `${diffMin} minute${diffMin !== 1 ? 's' : ''} ago`;
+        if (diffHour < 24) return `${diffHour} hour${diffHour !== 1 ? 's' : ''} ago`;
+        if (diffDay < 30) return `${diffDay} day${diffDay !== 1 ? 's' : ''} ago`;
+
+        const options = { day: 'numeric', month: 'short', year: 'numeric' };
+        return `on ${date.toLocaleDateString(undefined, options)}`;
+    }
+}
+
+/**
+ * Enhanced API manager with silent error handling
+ */
+class ApiManager {
+    constructor() {
+        this.queue = [];
+        this.pendingRequests = new Set();
+        this.isProcessing = false;
+        this.requestCount = 0;
+        this.lastReset = Date.now();
+        this.isRateLimited = false;
+    }
+
+    isPending(username, mediaId) {
+        return this.pendingRequests.has(`${username}-${mediaId}`);
+    }
+
+    queueRequest(entry, username, mediaId, callback) {
+        const requestKey = `${username}-${mediaId}`;
+
+        if (this.pendingRequests.has(requestKey)) {
+            return;
+        }
+
+        this.pendingRequests.add(requestKey);
+        this.queue.push({ entry, username, mediaId, callback, requestKey });
+
+        if (!this.isProcessing) {
+            this.processQueue();
+        }
+    }
+
+    async processQueue() {
+        if (this.queue.length === 0) {
+            this.isProcessing = false;
+            return;
+        }
+
+        this.isProcessing = true;
+
+        while (this.queue.length > 0) {
+            if (!this.checkRateLimit()) {
+                setTimeout(() => this.processQueue(), CONFIG.RATE_LIMIT_DURATION);
+                return;
+            }
+
+            const request = this.queue.shift();
+            await this.processRequest(request);
+
+            if (this.queue.length > 0) {
+                await this.delay(CONFIG.BATCH_DELAY);
+            }
+        }
+
+        this.isProcessing = false;
+    }
+
+    async processRequest(request) {
+        try {
+            const { username, mediaId, callback, requestKey } = request;
+            const comment = await this.fetchUserComment(username, mediaId);
+
+            const cacheKey = `${username}-${mediaId}`;
+            app.cacheManager.set(cacheKey, comment);
+
+            if (callback) {
+                callback(comment && comment.trim() !== '');
+            }
+
+        } catch (error) {
+            // Silent error handling - cache negative result
+            Logger.warn(`API request failed for ${request.username}: ${error.message}`);
+
+            const cacheKey = `${request.username}-${request.mediaId}`;
+            app.cacheManager.set(cacheKey, ''); // Empty string = no comment
+
+            if (request.callback) {
+                request.callback(false);
+            }
+        } finally {
+            this.pendingRequests.delete(request.requestKey);
+        }
+    }
+
+    checkRateLimit() {
+        const now = Date.now();
+
+        if (now - this.lastReset > CONFIG.RATE_LIMIT_DURATION) {
+            this.requestCount = 0;
+            this.lastReset = now;
+            this.isRateLimited = false;
+        }
+
+        if (this.requestCount >= CONFIG.MAX_REQUESTS_PER_MINUTE) {
+            this.isRateLimited = true;
+            return false;
+        }
+
+        this.requestCount++;
+        return true;
+    }
+
+    async fetchUserComment(username, mediaId) {
+        const query = `
+            query ($userName: String, $mediaId: Int) {
+                MediaList(userName: $userName, mediaId: $mediaId) {
+                    notes
+                }
+            }
+        `;
+
+        const variables = { userName: username, mediaId: parseInt(mediaId) };
+
+        const response = await fetch("https://graphql.anilist.co", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            body: JSON.stringify({ query, variables })
+        });
+
+        if (!response.ok) {
+            if (response.status === 429) {
+                this.isRateLimited = true;
+            }
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.errors) {
+            throw new Error('GraphQL errors');
+        }
+
+        return data.data?.MediaList?.notes || "";
+    }
+
+    delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    reset() {
+        this.queue = [];
+        this.pendingRequests.clear();
+        this.isProcessing = false;
+        this.requestCount = 0;
+        this.lastReset = Date.now();
+        this.isRateLimited = false;
+    }
+
+    destroy() {
+        this.reset();
+    }
+}
+
+/**
+ * Tooltip Manager (simplified from original)
  */
 class TooltipManager {
     static #instance = null;
@@ -865,38 +959,31 @@ class TooltipManager {
     constructor() {
         this.tooltip = null;
         this.currentElement = null;
-        this.state = 'inactive'; // 'inactive', 'showing', 'visible', 'hiding'
+        this.state = 'inactive';
         this.timers = new Map();
         this.mousePosition = { x: 0, y: 0 };
         this.hoverStates = {
             icon: false,
             tooltip: false
         };
-        this.forceVisible = false; // For debugging state inconsistencies
+        this.forceVisible = false;
 
         this.setupGlobalListeners();
         this.startAutoHideChecker();
     }
 
-    /**
-     * Sets up global event listeners
-     */
     setupGlobalListeners() {
         document.addEventListener('mousemove', this.handleMouseMove.bind(this));
         document.addEventListener('mouseleave', this.handleDocumentLeave.bind(this));
     }
 
-    /**
-     * Handles icon mouse enter
-     */
     handleIconEnter(element, username, mediaId) {
-        console.log('Icon enter:', username);
+        console.log('[TOOLTIP DEBUG] Icon enter:', username); // Force console output for debugging
         this.hoverStates.icon = true;
         this.forceVisible = false;
         this.clearTimer('hide');
         this.clearTimer('show');
 
-        // Show immediately if already visible for different element
         if (this.tooltip && this.tooltip.style.display === 'block') {
             this.show(element, username, mediaId);
         } else {
@@ -906,11 +993,8 @@ class TooltipManager {
         }
     }
 
-    /**
-     * Handles icon mouse leave
-     */
     handleIconLeave() {
-        console.log('Icon leave');
+        Logger.log('Icon leave');
         this.hoverStates.icon = false;
         this.clearTimer('show');
 
@@ -921,95 +1005,81 @@ class TooltipManager {
         }
     }
 
-    /**
-     * Handles icon click
-     */
     handleIconClick(element, username, mediaId) {
-        console.log('Icon click:', username);
-        this.forceVisible = true; // Keep visible longer on click
+        Logger.log('Icon click:', username);
+        this.forceVisible = true;
         this.clearTimer('hide');
         this.clearTimer('show');
         this.show(element, username, mediaId);
 
-        // Reset force visible after 3 seconds
         setTimeout(() => {
             this.forceVisible = false;
         }, 3000);
     }
 
-    /**
-     * Shows tooltip
-     */
     show(element, username, mediaId) {
-        console.log('Showing tooltip for:', username);
+        console.log('[TOOLTIP DEBUG] Showing tooltip for:', username);
         this.clearTimer('hide');
         this.currentElement = element;
         this.state = 'showing';
 
-        // Clear active states from all icons
         document.querySelectorAll(SELECTORS.COMMENT_ICON).forEach(icon => {
             icon.classList.remove('active-comment');
         });
 
         const tooltip = this.getTooltip();
+        console.log('[TOOLTIP DEBUG] Tooltip element:', tooltip);
+
         this.positionTooltip(element);
 
         tooltip.style.opacity = '0';
         tooltip.style.display = 'block';
         tooltip.innerHTML = "<div class='tooltip-loading'>Loading comment...</div>";
+        console.log('[TOOLTIP DEBUG] Set loading state');
 
-        // Highlight current icon
         const icon = element.querySelector(SELECTORS.COMMENT_ICON);
         if (icon) {
             icon.classList.add('active-comment');
-            console.log('Icon highlighted for:', username);
+            console.log('[TOOLTIP DEBUG] Icon highlighted for:', username);
         }
 
-        // Fade in
         requestAnimationFrame(() => {
             tooltip.style.opacity = '1';
             this.state = 'visible';
-            console.log('Tooltip visible for:', username);
+            console.log('[TOOLTIP DEBUG] Tooltip visible for:', username);
         });
 
         this.loadComment(username, mediaId);
     }
 
-    /**
-     * Hides tooltip
-     */
     hide() {
-        console.log('Hiding tooltip, states:', this.hoverStates, 'force visible:', this.forceVisible);
+        console.log('[TOOLTIP DEBUG] Hiding tooltip, states:', this.hoverStates, 'force visible:', this.forceVisible);
 
         if (this.hoverStates.icon || this.hoverStates.tooltip || this.forceVisible) {
-            console.log('Not hiding - still hovering or force visible');
+            console.log('[TOOLTIP DEBUG] Not hiding - still hovering or force visible');
             return;
         }
 
         if (this.tooltip && this.state !== 'hiding') {
-            console.log('Actually hiding tooltip');
+            console.log('[TOOLTIP DEBUG] Actually hiding tooltip');
             this.state = 'hiding';
             this.tooltip.style.opacity = '0';
 
             setTimeout(() => {
-                if (this.state === 'hiding') {
+                if (this.state === 'hiding' && this.tooltip) {
                     this.tooltip.style.display = 'none';
                     this.currentElement = null;
                     this.state = 'inactive';
 
-                    // Clear icon highlights
                     document.querySelectorAll(SELECTORS.COMMENT_ICON).forEach(icon => {
                         icon.classList.remove('active-comment');
                     });
-                    console.log('Tooltip hidden and cleaned up');
+                    console.log('[TOOLTIP DEBUG] Tooltip hidden and cleaned up');
                 }
             }, 300);
         }
     }
 
-    /**
-     * Gets or creates tooltip element
-     */
     getTooltip() {
         if (!this.tooltip) {
             this.tooltip = document.getElementById('anilist-tooltip');
@@ -1029,18 +1099,15 @@ class TooltipManager {
         return this.tooltip;
     }
 
-    /**
-     * Sets up tooltip event listeners
-     */
     setupTooltipEvents() {
         this.tooltip.addEventListener('mouseenter', () => {
-            console.log('Tooltip enter');
+            Logger.log('Tooltip enter');
             this.hoverStates.tooltip = true;
             this.clearTimer('hide');
         });
 
         this.tooltip.addEventListener('mouseleave', () => {
-            console.log('Tooltip leave');
+            Logger.log('Tooltip leave');
             this.hoverStates.tooltip = false;
             if (!this.hoverStates.icon && !this.forceVisible) {
                 this.setTimer('hide', () => this.hide(), CONFIG.TOOLTIP_HIDE_DELAY);
@@ -1048,9 +1115,6 @@ class TooltipManager {
         });
     }
 
-    /**
-     * Positions tooltip next to element
-     */
     positionTooltip(element) {
         const tooltip = this.getTooltip();
         const followingSection = document.querySelector(SELECTORS.FOLLOWING_SECTION);
@@ -1071,53 +1135,74 @@ class TooltipManager {
         tooltip.style.top = posY + 'px';
     }
 
-    /**
-     * Loads and displays comment
-     */
     async loadComment(username, mediaId) {
+        console.log('[TOOLTIP DEBUG] Loading comment for:', username);
         const cacheKey = `${username}-${mediaId}`;
         let cachedComment = app.cacheManager.get(cacheKey);
 
+        console.log('[TOOLTIP DEBUG] Cache lookup result:', cachedComment ? 'FOUND' : 'NOT FOUND');
+
         // Show cached content first if available
         if (cachedComment) {
+            console.log('[TOOLTIP DEBUG] Has cached content:', cachedComment.hasContent());
+            console.log('[TOOLTIP DEBUG] Cache content preview:', cachedComment.content ? cachedComment.content.substring(0, 50) : 'EMPTY');
             this.updateTooltipContent(cachedComment.content, username, mediaId, cachedComment);
+        } else {
+            console.log('[TOOLTIP DEBUG] No cache found, showing empty state');
+            this.updateTooltipContent('', username, mediaId, null);
         }
 
         // Fetch fresh content if cache is invalid and not rate limited
         if (!cachedComment?.isValid() && !app.apiManager.isRateLimited) {
             try {
                 if (app.apiManager.checkRateLimit()) {
+                    console.log('[TOOLTIP DEBUG] Making fresh API request for:', username);
                     const comment = await app.apiManager.fetchUserComment(username, mediaId);
                     app.cacheManager.set(cacheKey, comment);
+                    console.log('[TOOLTIP DEBUG] Fresh API result:', comment ? comment.substring(0, 50) : 'EMPTY');
                     this.updateTooltipContent(comment, username, mediaId, app.cacheManager.get(cacheKey));
+                } else {
+                    console.log('[TOOLTIP DEBUG] Rate limited, cannot fetch fresh content');
                 }
             } catch (error) {
+                console.error('[TOOLTIP DEBUG] Error loading comment:', error.message);
                 this.showError('Error loading comment');
             }
         }
     }
 
-    /**
-     * Updates tooltip content
-     */
     updateTooltipContent(comment, username, mediaId, cachedComment) {
-        if (!this.tooltip) return;
+        console.log('[TOOLTIP DEBUG] Updating tooltip content for:', username);
+        console.log('[TOOLTIP DEBUG] Comment to display:', comment ? comment.substring(0, 100) : 'NO COMMENT');
 
-        this.tooltip.innerHTML = this.createTooltipContent(comment, username, mediaId, cachedComment);
+        if (!this.tooltip) {
+            console.error('[TOOLTIP DEBUG] No tooltip element found!');
+            return;
+        }
+
+        const content = this.createTooltipContent(comment, username, mediaId, cachedComment);
+        console.log('[TOOLTIP DEBUG] Generated HTML length:', content.length);
+        console.log('[TOOLTIP DEBUG] Generated HTML preview:', content.substring(0, 200));
+
+        this.tooltip.innerHTML = content;
+
+        // Verify the update
+        const actualContent = this.tooltip.innerHTML;
+        console.log('[TOOLTIP DEBUG] Actual tooltip HTML after update:', actualContent.substring(0, 200));
+
+        if (actualContent.includes('Loading comment')) {
+            console.warn('[TOOLTIP DEBUG] Tooltip still shows loading state after update!');
+        } else {
+            console.log('[TOOLTIP DEBUG] Tooltip content updated successfully');
+        }
     }
 
-    /**
-     * Creates tooltip HTML content
-     */
     createTooltipContent(comment, username, mediaId, cachedComment) {
         const hasComment = comment && comment.trim();
 
         return `<div class="tooltip-content"><div class="${hasComment ? 'comment' : 'no-comment'}">${hasComment ? this.escapeHtml(comment) : 'No comment'}</div></div><div class="tooltip-footer"><span class="tooltip-info">${cachedComment ? this.getFormattedCacheInfo(cachedComment) : `Cached`}</span><button class="tooltip-refresh-btn" onclick="window.anilistExtension.refreshComment('${username}', ${mediaId})"><i class="fa-solid fa-sync"></i> Refresh</button></div>`;
     }
 
-    /**
-     * Gets formatted cache information
-     */
     getFormattedCacheInfo(cachedComment) {
         const age = cachedComment.getAge();
         const isOld = age > (CONFIG.CACHE_MAX_AGE * 0.75);
@@ -1127,54 +1212,36 @@ class TooltipManager {
         return `<span style="${style}">${icon}Cached ${cachedComment.getFormattedAge()}</span>`;
     }
 
-    /**
-     * Shows error message in tooltip
-     */
     showError(message) {
         if (this.tooltip) {
             this.tooltip.innerHTML += `<div class="tooltip-error">${message}</div>`;
         }
     }
 
-    /**
-     * Escapes HTML to prevent XSS
-     */
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
 
-    /**
-     * Handles mouse movement for hover detection
-     */
     handleMouseMove(e) {
         this.mousePosition = { x: e.clientX, y: e.clientY };
     }
 
-    /**
-     * Handles mouse leaving document
-     */
     handleDocumentLeave() {
-        console.log('Document leave');
+        Logger.log('Document leave');
         this.hoverStates.icon = false;
         this.hoverStates.tooltip = false;
         this.forceVisible = false;
         this.hide();
     }
 
-    /**
-     * Starts auto hide checker
-     */
     startAutoHideChecker() {
         this.autoHideInterval = setInterval(() => {
             this.checkAutoHide();
         }, CONFIG.AUTO_HIDE_CHECK_INTERVAL);
     }
 
-    /**
-     * Checks if tooltip should auto-hide
-     */
     checkAutoHide() {
         if (!this.tooltip || this.state !== 'visible') return;
 
@@ -1185,7 +1252,6 @@ class TooltipManager {
             const isInTooltip = this.isPointInRect(this.mousePosition, tooltipRect);
             const isInIcon = this.isPointInRect(this.mousePosition, iconRect);
 
-            // Update states but don't override if force visible
             if (!this.forceVisible) {
                 this.hoverStates.tooltip = isInTooltip;
                 this.hoverStates.icon = isInIcon;
@@ -1195,20 +1261,16 @@ class TooltipManager {
                 }
             }
 
-            // Ensure icon highlighting is in sync
             const icon = this.currentElement.querySelector(SELECTORS.COMMENT_ICON);
             if (icon && this.state === 'visible') {
                 if (!icon.classList.contains('active-comment')) {
-                    console.log('Re-adding active-comment class due to sync issue');
+                    Logger.log('Re-adding active-comment class due to sync issue');
                     icon.classList.add('active-comment');
                 }
             }
         }
     }
 
-    /**
-     * Checks if point is within rectangle
-     */
     isPointInRect(point, rect) {
         return point.x >= rect.left &&
             point.x <= rect.right &&
@@ -1216,9 +1278,6 @@ class TooltipManager {
             point.y <= rect.bottom;
     }
 
-    /**
-     * Timer management utilities
-     */
     setTimer(name, callback, delay) {
         this.clearTimer(name);
         this.timers.set(name, setTimeout(callback, delay));
@@ -1232,9 +1291,6 @@ class TooltipManager {
         }
     }
 
-    /**
-     * Cleans up resources
-     */
     destroy() {
         this.timers.forEach(timer => clearTimeout(timer));
         this.timers.clear();
@@ -1256,7 +1312,7 @@ class TooltipManager {
 let app = null;
 
 /**
- * Initializes the application
+ * Initialize the application
  */
 function initializeApp() {
     if (!app) {
@@ -1265,26 +1321,32 @@ function initializeApp() {
         // Expose refresh function globally for tooltip button
         window.anilistExtension = {
             refreshComment: async (username, mediaId) => {
-                // Implementation for refresh button
                 const cacheKey = `${username}-${mediaId}`;
                 try {
                     const comment = await app.apiManager.fetchUserComment(username, mediaId);
                     app.cacheManager.set(cacheKey, comment);
 
-                    // Update tooltip if it's currently showing this comment
                     const tooltipManager = TooltipManager.getInstance();
                     if (tooltipManager.currentElement) {
                         const cachedComment = app.cacheManager.get(cacheKey);
                         tooltipManager.updateTooltipContent(comment, username, mediaId, cachedComment);
                     }
                 } catch (error) {
-                    console.warn('Comment refresh failed:', error.message);
+                    Logger.warn('Comment refresh failed:', error.message);
                 }
+            },
+
+            enableDebug: () => {
+                CONFIG.DEBUG_MODE = true;
+                console.log('[AnilistExt] Debug mode enabled. Reload page for full debug output.');
+            },
+
+            showLogs: () => {
+                Logger.showLogs();
             }
         };
     }
 
-    // Always try to initialize, let the class handle if it's already initialized
     app.init();
 }
 
@@ -1292,13 +1354,12 @@ function initializeApp() {
  * Event listeners for initialization
  */
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('DOMContentLoaded - initializing extension');
+    Logger.log('DOMContentLoaded - initializing extension');
     setTimeout(initializeApp, 50);
 });
 
 window.addEventListener('load', () => {
-    console.log('Window load event - checking if needs initialization');
-    // Always try to initialize on window load as Following section might load later
+    Logger.log('Window load event - checking if needs initialization');
     setTimeout(initializeApp, 100);
 });
 
@@ -1310,7 +1371,7 @@ window.addEventListener('beforeunload', () => {
 });
 
 // Initialize immediately and aggressively for fast loading pages
-console.log('Starting immediate initialization');
+Logger.log('Starting immediate initialization');
 setTimeout(initializeApp, 10);
 
 // Additional early initialization attempts
