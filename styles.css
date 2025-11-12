@@ -1,11 +1,10 @@
 /**
  * Anilist Hover Comments - Enhanced CSS Styles
- * 
- * This stylesheet provides enhanced styles for the comment tooltip system
+ * * This stylesheet provides enhanced styles for the comment tooltip system
  * with improved visual feedback for refresh and cache states.
  *
- * Created by ExAstra
- * GitHub: https://github.com/rikymarche-ctrl/anilist-extension
+ * @author ExAstra
+ * @see https://github.com/rikymarche-ctrl/anilist-extension
  */
 
 /*------------------------------------------------------
@@ -23,12 +22,6 @@
   0% { opacity: 0.6; }
   50% { opacity: 1; }
   100% { opacity: 0.6; }
-}
-
-/* Spinning animation for loading indicators */
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
 }
 
 /* Success animation for feedback */
@@ -50,11 +43,6 @@
   0% { background-color: rgba(255, 204, 0, 0.2); }
   50% { background-color: rgba(255, 204, 0, 0.4); }
   100% { background-color: rgba(255, 204, 0, 0.2); }
-}
-
-/* Apply spin animation to Font Awesome spinner icons */
-.fa-spin {
-  animation: spin 1s linear infinite;
 }
 
 /* Animate pulsing effect for notifications */
@@ -245,12 +233,6 @@
   animation: warningPulse 1.5s 1 ease-in-out;
 }
 
-/* Spinner icon in refresh button */
-#anilist-tooltip .tooltip-refresh-btn .fa-spinner {
-  display: inline-block;
-  margin-right: 4px;
-}
-
 /*------------------------------------------------------
  * COMMENT ICON
  *------------------------------------------------------*/
@@ -351,11 +333,6 @@ div.following a {
   line-height: 1.4;
   display: flex;
   align-items: flex-start;
-}
-
-#anilist-tooltip .tooltip-warning i {
-  margin-right: 6px;
-  margin-top: 2px;
 }
 
 /*------------------------------------------------------

@@ -1,5 +1,5 @@
 /**
- * Anilist Hover Comments - Clean Rewrite
+ * Anilist Hover Comments
  *
  * This script enhances Anilist anime/manga pages by displaying user comments via
  * a hover interface. Rewritten for simplicity and reliability.
@@ -12,26 +12,34 @@
  * - Silent error handling without console pollution
  *
  * @author ExAstra
- * @version 1.3.1
  * @see https://github.com/rikymarche-ctrl/anilist-extension
  */
 
 /**
  * Configuration constants for application behavior
  */
+const ANILIST_API_RATE_LIMIT = 90; // Official Anilist limit
+
 const CONFIG = {
-    CACHE_MAX_AGE: 24 * 60 * 60 * 1000, // 24 hours for comments
-    NEGATIVE_CACHE_AGE: 60 * 60 * 1000, // 1 hour for "no comment" entries
-    MAX_REQUESTS_PER_MINUTE: 10,
+    CACHE_MAX_AGE: 2 * 24 * 60 * 60 * 1000, // 48 hours
+    NEGATIVE_CACHE_AGE: 60 * 60 * 1000, // 1 hour
+    MAX_REQUESTS_PER_MINUTE: ANILIST_API_RATE_LIMIT / 2,
     RATE_LIMIT_DURATION: 60000,
     BATCH_DELAY: 200,
     TOOLTIP_SHOW_DELAY: 50,
     TOOLTIP_HIDE_DELAY: 1000,
     AUTO_HIDE_CHECK_INTERVAL: 500,
     CACHE_SAVE_INTERVAL: 300000,
-    FONTAWESOME_URL: 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css',
+    MAIN_LOOP_INTERVAL: 250,
     DEBUG_MODE: false
 };
+
+/**
+ * Inline SVG Icons
+ */
+const ICON_COMMENT_SVG = `<svg class="svg-inline--fa" style="width: 1em; height: 1em; vertical-align: -0.125em;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M512 240c0 114.9-114.6 208-256 208c-37.1 0-72.3-6.4-104.1-17.9c-11.9 8.7-31.3 20.6-54.3 30.6C73.6 471.1 44.7 480 16 480c-6.5 0-12.3-3.9-14.8-9.9c-2.5-6-1.1-12.8 3.4-17.4l4.1-4.1c10.1-10.1 16.6-23.3 18.2-38.1C11.2 367.1 0 306.7 0 240C0 125.1 114.6 32 256 32s256 93.1 256 208z"/></svg>`;
+const ICON_REFRESH_SVG = `<svg class="svg-inline--fa" style="width: 0.8em; height: 0.8em; vertical-align: -0.05em; margin-right: 5px;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M463.5 224H472c13.3 0 24-10.7 24-24V72c0-9.7-5.8-18.5-14.8-22.2s-19.3-1.7-26.2 5.2L413.4 96.6c-87.6-86.5-228.7-86.2-315.8 1c-87.5 87.5-87.5 229.3 0 316.8s229.3 87.5 316.8 0c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0c-62.5 62.5-163.8 62.5-226.3 0s-62.5-163.8 0-226.3c62.2-62.2 162.7-62.5 225.3-1L327 160c-7 7-7.8 17.8-1.8 25.8s18.1 12 25.8 1.8l90.5-90.5c5.2-5.2 7-12.5 5.2-19.3S471.7 64 464 64H344c-13.3 0-24 10.7-24 24s10.7 24 24 24h60.5c-58.5 57.4-152.8 57.4-211.3 0s-57.4-152.8 0-211.3s152.8-57.4 211.3 0L463.5 224z"/></svg>`;
+const ICON_LOADING_SVG = `<svg class="svg-inline--fa fa-spin" style="width: 0.8em; height: 0.8em; vertical-align: -0.05em; margin-right: 5px;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M304 48a48 48 0 1 0 -96 0 48 48 0 1 0 96 0zm0 416a48 48 0 1 0 -96 0 48 48 0 1 0 96 0zM48 304a48 48 0 1 0 0-96 48 48 0 1 0 0 96zm416 0a48 48 0 1 0 0-96 48 48 0 1 0 0 96zM142.9 437A48 48 0 1 0 75 369.1 48 48 0 1 0 142.9 437zm0-294.2A48 48 0 1 0 75 75a48 48 0 1 0 67.9 67.9zM369.1 437A48 48 0 1 0 437 369.1 48 48 0 1 0 369.1 437z"/></svg>`;
 
 /**
  * CSS selectors used throughout the application
@@ -39,10 +47,10 @@ const CONFIG = {
 const SELECTORS = {
     FOLLOWING_SECTION: 'div.following, div[class="following"], div[class^="following"]',
     USER_LINKS: 'a[href^="/user/"]',
+    SCORE: 'div[class*="score-"]',
     COMMENT_ICON: '.anilist-comment-icon',
     COMMENT_ICON_COLUMN: '.comment-icon-column',
-    TOOLTIP: '#anilist-tooltip',
-    FONTAWESOME_LINK: 'link[href*="fontawesome"]'
+    TOOLTIP: '#anilist-tooltip'
 };
 
 /**
@@ -54,39 +62,15 @@ class Logger {
             console.log(`[AnilistExt] ${message}`, ...args);
         }
     }
-
     static warn(message, ...args) {
         if (CONFIG.DEBUG_MODE) {
             console.warn(`[AnilistExt] ${message}`, ...args);
         }
-        this.storeMessage('warn', message, args);
     }
-
     static error(message, ...args) {
         if (CONFIG.DEBUG_MODE) {
             console.error(`[AnilistExt] ${message}`, ...args);
         }
-        this.storeMessage('error', message, args);
-    }
-
-    static storeMessage(level, message, args) {
-        if (!window.anilistExtensionLogs) {
-            window.anilistExtensionLogs = [];
-        }
-        window.anilistExtensionLogs.push({
-            level,
-            message,
-            args,
-            timestamp: new Date().toISOString()
-        });
-
-        if (window.anilistExtensionLogs.length > 50) {
-            window.anilistExtensionLogs = window.anilistExtensionLogs.slice(-50);
-        }
-    }
-
-    static showLogs() {
-        console.table(window.anilistExtensionLogs || []);
     }
 }
 
@@ -95,19 +79,15 @@ class Logger {
  */
 class AnilistHoverComments {
     constructor() {
-        this.isInitialized = false;
         this.lastUrl = location.href;
         this.lastMediaId = null;
-        this.urlObserver = null;
-        this.cacheManager = new CacheManager();
-        this.apiManager = new ApiManager();
-        this.tooltipManager = TooltipManager.getInstance();
-        this.cleanup = [];
+        this.mainLoopInterval = null;
+        this.processedLinks = new Set(); // Tracks already processed links
 
-        // Icon persistence tracking
-        this.isFirstTimeLoad = false;
-        this.usersWithoutCache = 0;
-        this.totalUsers = 0;
+        this.cacheManager = new CacheManager();
+        this.apiManager = new ApiManager(this.cacheManager);
+        this.tooltipManager = TooltipManager.getInstance(this.apiManager);
+        this.apiManager.setTooltipManager(this.tooltipManager); // Link the tooltip manager to the api manager
 
         Logger.log("Anilist Hover Comments: Initialized!");
     }
@@ -116,382 +96,142 @@ class AnilistHoverComments {
      * Main initialization
      */
     async init() {
-        try {
-            await this.loadFontAwesome();
-            const media = this.extractMediaFromUrl();
-
-            if (!media) return;
-
-            // Don't re-initialize if already done for this media
-            if (this.isInitialized && this.lastMediaId === media.id) return;
-
-            this.resetState();
-            await this.cacheManager.load();
-            this.setupUrlObserver();
-
-            // Start monitoring for Following section
-            this.startFollowingSectionWatcher(media.id);
-
-        } catch (error) {
-            Logger.error('Initialization failed:', error.message);
-        }
+        await this.cacheManager.load();
+        this.startMainLoop();
     }
 
     /**
-     * Watch for Following section to appear
+     * Starts the main loop
      */
-    startFollowingSectionWatcher(mediaId) {
-        Logger.log('Starting Following section watcher');
+    startMainLoop() {
+        if (this.mainLoopInterval) {
+            clearInterval(this.mainLoopInterval);
+        }
 
-        // Try immediate check first
-        this.checkForFollowingSection(mediaId);
-
-        // Set up MutationObserver to watch for Following section appearing
-        const observer = new MutationObserver((mutations) => {
-            if (this.isInitialized) {
-                observer.disconnect();
-                return;
-            }
-
-            let foundNewContent = false;
-
-            for (const mutation of mutations) {
-                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                    for (const node of mutation.addedNodes) {
-                        if (node.nodeType === Node.ELEMENT_NODE) {
-                            if (this.nodeContainsFollowingContent(node)) {
-                                foundNewContent = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                if (foundNewContent) break;
-            }
-
-            if (foundNewContent) {
-                Logger.log('MutationObserver detected Following section content');
-                setTimeout(() => {
-                    this.checkForFollowingSection(mediaId);
-                }, 100);
-            }
-        });
-
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-
-        // Clean up observer after reasonable time
-        setTimeout(() => {
-            if (!this.isInitialized) {
-                Logger.log('Following section watcher timeout');
-            }
-            observer.disconnect();
-        }, 15000);
+        this.mainLoopInterval = setInterval(
+            () => this.mainLoop(),
+            CONFIG.MAIN_LOOP_INTERVAL
+        );
     }
 
     /**
-     * Check if node contains Following content
+     * The single main loop that replaces all observers.
      */
-    nodeContainsFollowingContent(node) {
-        if (node.matches && node.matches(SELECTORS.FOLLOWING_SECTION)) {
-            return true;
+    mainLoop() {
+        const currentUrl = location.href;
+        const media = this.extractMediaFromUrl();
+
+        // 1. Check for URL changes
+        if (currentUrl !== this.lastUrl) {
+            Logger.log("URL change detected, resetting state.");
+            this.lastUrl = currentUrl;
+            this.lastMediaId = null;
+            this.processedLinks.clear();
+            this.tooltipManager.hide(true); // Force-hide the tooltip
         }
 
-        if (node.querySelector && node.querySelector(SELECTORS.FOLLOWING_SECTION)) {
-            return true;
+        // 2. Check for media page
+        if (!media) {
+            this.lastMediaId = null;
+            return; // Not on a media page
         }
 
-        if (node.matches && node.matches(SELECTORS.USER_LINKS)) {
-            return true;
+        // 3. Check for new Media ID
+        if (media.id !== this.lastMediaId) {
+            Logger.log(`New media page detected: ${media.id}`);
+            this.lastMediaId = media.id;
+            this.processedLinks.clear();
         }
 
-        if (node.querySelector && node.querySelector(SELECTORS.USER_LINKS)) {
-            return true;
-        }
-
-        return node.tagName === 'H2' && node.textContent.includes('Following');
+        // 4. Process user links
+        this.processUserLinks(media.id);
     }
 
     /**
-     * Check for Following section and process if found
+     * Process all user links in the following section
      */
-    async checkForFollowingSection(mediaId) {
+    processUserLinks(mediaId) {
         const followingSection = this.findFollowingSection();
         if (!followingSection) {
-            Logger.log('Following section not found');
-            return false;
+            return; // Section not yet loaded
         }
 
         const userLinks = followingSection.querySelectorAll(SELECTORS.USER_LINKS);
         if (userLinks.length === 0) {
-            Logger.log('Following section found but no user links yet');
-            return false;
+            return; // Links not yet loaded
         }
-
-        Logger.log(`Found Following section with ${userLinks.length} user links - processing`);
-        const success = await this.processFollowingSection(mediaId);
-
-        if (success) {
-            this.isInitialized = true;
-            this.lastMediaId = mediaId;
-            Logger.log('Extension successfully initialized');
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * Load FontAwesome if not already present
-     */
-    async loadFontAwesome() {
-        if (document.querySelector(SELECTORS.FONTAWESOME_LINK)) return;
-
-        return new Promise((resolve) => {
-            const link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = CONFIG.FONTAWESOME_URL;
-            link.crossOrigin = 'anonymous';
-            link.referrerPolicy = 'no-referrer';
-            link.onload = resolve;
-            link.onerror = resolve;
-            document.head.appendChild(link);
-        });
-    }
-
-    /**
-     * Process the following section and set up comment icons
-     */
-    async processFollowingSection(mediaId) {
-        const followingSection = this.findFollowingSection();
-        if (!followingSection) return false;
-
-        const userLinks = followingSection.querySelectorAll(SELECTORS.USER_LINKS);
-        if (userLinks.length === 0) return false;
-
-        Logger.log(`Processing ${userLinks.length} users for media ${mediaId}`);
-
-        // Reset counters for soft refresh tracking
-        this.usersWithoutCache = 0;
-        this.totalUsers = userLinks.length;
-        this.isFirstTimeLoad = false;
-
-        let iconsAdded = 0;
 
         for (const link of userLinks) {
             const username = this.extractUsername(link);
             if (username) {
-                const wasProcessed = await this.processUser(link, username, mediaId);
-                if (wasProcessed) iconsAdded++;
-            }
-        }
+                const linkKey = `${username}-${mediaId}`;
+                // Only process if new or icon disappeared
+                const hasIcon = link.querySelector(SELECTORS.COMMENT_ICON_COLUMN);
 
-        Logger.log(`Added ${iconsAdded} comment icons from cache`);
-
-        // Start API completion monitoring for first-time loads
-        if (this.usersWithoutCache === this.totalUsers && this.totalUsers > 0) {
-            this.isFirstTimeLoad = true;
-            Logger.log('First-time load detected - will RE-PROCESS entire following section after API completion');
-            this.scheduleCompleteReprocessing(mediaId);
-        }
-
-        return userLinks.length > 0;
-    }
-
-    /**
-     * Find the following section in the DOM
-     */
-    findFollowingSection() {
-        // Try multiple approaches to find the section
-        const approaches = [
-            () => this.findByTitle(),
-            () => document.querySelector(SELECTORS.FOLLOWING_SECTION)
-        ];
-
-        for (const approach of approaches) {
-            const section = approach();
-            if (section) return section;
-        }
-
-        return null;
-    }
-
-    /**
-     * Find following section by looking for H2 title
-     */
-    findByTitle() {
-        const h2Elements = document.querySelectorAll('h2');
-        for (const h2 of h2Elements) {
-            if (h2.textContent.includes('Following')) {
-                let sibling = h2.nextElementSibling;
-                while (sibling) {
-                    if (sibling.tagName.toLowerCase() === 'div') {
-                        return sibling;
-                    }
-                    sibling = sibling.nextElementSibling;
-                }
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Start monitoring and re-adding icons as needed (ALWAYS enabled for reliability)
-     */
-    startIconPersistenceMonitoring(mediaId) {
-        Logger.log('Starting icon persistence monitoring for media', mediaId);
-
-        let monitoringAttempts = 0;
-        const maxAttempts = 20; // Back to 20 attempts since we're starting after APIs
-
-        const monitorIcons = () => {
-            monitoringAttempts++;
-
-            try {
-                const followingSection = this.findFollowingSection();
-                if (!followingSection) {
-                    Logger.log('Following section not found, stopping monitoring');
-                    return;
-                }
-
-                const userLinks = followingSection.querySelectorAll(SELECTORS.USER_LINKS);
-                const existingIcons = followingSection.querySelectorAll(SELECTORS.COMMENT_ICON);
-
-                let iconsAdded = 0;
-                let expectedIcons = 0;
-
-                // Check each user and re-add icon if needed
-                for (const link of userLinks) {
-                    const username = this.extractUsername(link);
-                    if (username) {
-                        const cacheKey = `${username}-${mediaId}`;
-                        const cachedComment = this.cacheManager.get(cacheKey);
-
-                        // If user should have an icon but doesn't
-                        if (cachedComment && cachedComment.hasContent()) {
-                            expectedIcons++;
-
-                            const hasIcon = link.querySelector(SELECTORS.COMMENT_ICON);
-                            if (!hasIcon) {
-                                Logger.log(`Re-adding missing icon for ${username} (attempt ${monitoringAttempts})`);
-                                this.addIcon(link, username, mediaId);
-                                iconsAdded++;
-                            }
-                        }
+                if (!this.processedLinks.has(linkKey) || !hasIcon) {
+                    this.processUser(link, username, mediaId);
+                    if (!hasIcon) {
+                        this.processedLinks.delete(linkKey); // Force re-processing if icon was removed
                     }
                 }
-
-                Logger.log(`Monitor attempt ${monitoringAttempts}: Expected ${expectedIcons}, Found ${existingIcons.length}, Added ${iconsAdded}`);
-
-                // Continue monitoring if we're still missing icons or just added some
-                if (monitoringAttempts < maxAttempts && (existingIcons.length < expectedIcons || iconsAdded > 0)) {
-                    setTimeout(monitorIcons, 500); // Check every 500ms
-                } else {
-                    Logger.log(`Icon persistence monitoring completed after ${monitoringAttempts} attempts`);
-
-                    // Final validation
-                    const finalIcons = followingSection.querySelectorAll(SELECTORS.COMMENT_ICON);
-                    Logger.log(`Final result: ${finalIcons.length} icons persistent`);
-                }
-
-            } catch (error) {
-                Logger.error('Icon monitoring failed:', error.message);
             }
-        };
-
-        // Start monitoring immediately
-        monitorIcons();
-    }
-
-    /**
-     * Monitor API completion and START icon monitoring only after completion
-     */
-    scheduleApiCompletionMonitoring(mediaId) {
-        Logger.log('Waiting for API completion before starting icon monitoring...');
-
-        const checkApiCompletion = () => {
-            const pendingRequests = this.apiManager.queue.length + this.apiManager.pendingRequests.size;
-
-            if (pendingRequests === 0) {
-                Logger.log('API requests completed - NOW starting icon monitoring');
-                // Give APIs a moment to update cache, then start monitoring
-                setTimeout(() => {
-                    this.startIconPersistenceMonitoring(mediaId);
-                }, 500);
-            } else {
-                Logger.log(`${pendingRequests} API requests still pending - checking again in 1s`);
-                setTimeout(checkApiCompletion, 1000);
-            }
-        };
-
-        // Start checking after a brief delay
-        setTimeout(checkApiCompletion, 1000);
-    }
-    extractUsername(link) {
-        const href = link.getAttribute('href');
-        if (!href) return null;
-        return href.replace('/user/', '').replace(/\/$/, '');
+        }
     }
 
     /**
      * Process a single user entry with negative caching
      */
     async processUser(entry, username, mediaId) {
-        // Skip if already processed
-        if (entry.querySelector(SELECTORS.COMMENT_ICON_COLUMN)) return false;
+        // Prevents double-adding
+        if (entry.querySelector(SELECTORS.COMMENT_ICON_COLUMN)) return;
 
         const cacheKey = `${username}-${mediaId}`;
         const cachedComment = this.cacheManager.get(cacheKey);
-        let iconAdded = false;
 
-        // Check if user has NO cache at all (for first-time load detection)
-        if (!cachedComment) {
-            this.usersWithoutCache++;
-            Logger.log(`User ${username} has no cache - incrementing counter to ${this.usersWithoutCache}`);
-        }
-
-        // If we have cached content, show icon immediately
+        // If cache has content, show icon
         if (cachedComment && cachedComment.hasContent()) {
             this.addIcon(entry, username, mediaId);
-            iconAdded = true;
-            Logger.log(`Icon added immediately for ${username} (cached)`);
+            this.processedLinks.add(cacheKey);
         }
-
-        // If cache is invalid or doesn't exist, make API request
-        if (!cachedComment || (!cachedComment.isValid() && !cachedComment.isNegativeCacheValid())) {
+        // If cache is expired or non-existent, queue API request
+        else if (!cachedComment || (!cachedComment.isValid() && !cachedComment.isNegativeCacheValid())) {
             this.apiManager.queueRequest(entry, username, mediaId, (hasContent) => {
                 if (hasContent && !entry.querySelector(SELECTORS.COMMENT_ICON_COLUMN)) {
                     this.addIcon(entry, username, mediaId);
-                    Logger.log(`Icon added via API for ${username}`);
+                    this.processedLinks.add(cacheKey);
                 }
             });
         }
-
-        return iconAdded;
+        // If cache is negative AND valid, do nothing
+        else if (cachedComment && !cachedComment.hasContent() && cachedComment.isNegativeCacheValid()) {
+            // It's a negative cache, don't show icon.
+            this.processedLinks.add(cacheKey);
+        }
     }
 
     /**
-     * Add a comment icon to user entry (from original code)
+     * Add a comment icon to user entry
      */
     addIcon(entry, username, mediaId) {
-        // Skip if icon already exists
-        if (entry.querySelector(SELECTORS.COMMENT_ICON)) return;
+        // Double-check
+        if (entry.querySelector(SELECTORS.COMMENT_ICON_COLUMN)) return;
 
         const iconContainer = this.createIconContainer(username, mediaId);
         const icon = this.createIcon();
-
         iconContainer.appendChild(icon);
-        this.positionIcon(entry, iconContainer);
 
-        entry.appendChild(iconContainer);
+        // Insert before the 'score' element for robust positioning
+        const scoreEl = entry.querySelector(SELECTORS.SCORE);
+        if (scoreEl) {
+            scoreEl.parentNode.insertBefore(iconContainer, scoreEl);
+        } else {
+            entry.appendChild(iconContainer); // Fallback
+        }
+
         this.setupIconEvents(iconContainer, username, mediaId);
+        Logger.log(`Icon added for ${username}`);
     }
 
-    /**
-     * Create icon container element (from original code)
-     */
     createIconContainer(username, mediaId) {
         const container = document.createElement('div');
         container.className = 'comment-icon-column';
@@ -500,28 +240,14 @@ class AnilistHoverComments {
         return container;
     }
 
-    /**
-     * Create comment icon element (from original code)
-     */
     createIcon() {
-        const icon = document.createElement('i');
-        icon.className = 'fa-solid fa-comment anilist-comment-icon';
+        const icon = document.createElement('span');
+        icon.className = 'anilist-comment-icon';
+        icon.innerHTML = ICON_COMMENT_SVG;
         return icon;
     }
 
-    /**
-     * Position icon within entry (from original code)
-     */
-    positionIcon(entry, iconContainer) {
-        entry.style.position = 'relative';
-        iconContainer.style.right = '100px';
-    }
-
-    /**
-     * Set up event listeners for icon (from original code)
-     */
     setupIconEvents(iconContainer, username, mediaId) {
-        const tooltipManager = TooltipManager.getInstance();
         const parentEntry = iconContainer.closest('a');
 
         // Row hover effects
@@ -530,31 +256,27 @@ class AnilistHoverComments {
                 const icon = iconContainer.querySelector(SELECTORS.COMMENT_ICON);
                 if (icon) icon.classList.add('row-hover');
             };
-
             const rowLeaveHandler = () => {
                 const icon = iconContainer.querySelector(SELECTORS.COMMENT_ICON);
                 if (icon) icon.classList.remove('row-hover');
             };
-
             parentEntry.addEventListener("mouseenter", rowEnterHandler);
             parentEntry.addEventListener("mouseleave", rowLeaveHandler);
         }
 
-        // Icon specific events
+        // Icon-specific events
         const iconEnterHandler = (e) => {
             e.stopPropagation();
-            tooltipManager.handleIconEnter(iconContainer, username, mediaId);
+            this.tooltipManager.handleIconEnter(iconContainer, username, mediaId);
         };
-
         const iconLeaveHandler = (e) => {
             e.stopPropagation();
-            tooltipManager.handleIconLeave();
+            this.tooltipManager.handleIconLeave();
         };
-
         const iconClickHandler = (e) => {
             e.stopPropagation();
             e.preventDefault();
-            tooltipManager.handleIconClick(iconContainer, username, mediaId);
+            this.tooltipManager.handleIconClick(iconContainer, username, mediaId);
         };
 
         iconContainer.addEventListener("mouseenter", iconEnterHandler);
@@ -563,107 +285,46 @@ class AnilistHoverComments {
     }
 
     /**
-     * Set up URL change observer for SPA navigation
+     * Find the following section in the DOM
      */
-    setupUrlObserver() {
-        // Clean up existing observer
-        if (this.urlObserver) {
-            this.urlObserver.disconnect();
-        }
+    findFollowingSection() {
+        const section = document.querySelector(SELECTORS.FOLLOWING_SECTION);
+        if (section) return section;
 
-        this.urlObserver = new MutationObserver(this.handleUrlChange.bind(this));
-        this.urlObserver.observe(document, {
-            childList: true,
-            subtree: true
-        });
-
-        // Add event listeners for navigation
-        const navigationEvents = ['popstate', 'hashchange'];
-        navigationEvents.forEach(event => {
-            const handler = () => this.handleUrlChange();
-            window.addEventListener(event, handler);
-            this.cleanup.push(() => window.removeEventListener(event, handler));
-        });
-    }
-
-    /**
-     * Handle URL changes for SPA navigation
-     */
-    handleUrlChange() {
-        const currentUrl = location.href;
-        const media = this.extractMediaFromUrl();
-        const currentMediaId = media?.id;
-
-        if (currentUrl !== this.lastUrl || currentMediaId !== this.lastMediaId) {
-            Logger.log('URL/Media change detected, reinitializing');
-            this.lastUrl = currentUrl;
-            this.lastMediaId = currentMediaId;
-            this.isInitialized = false;
-
-            if (currentMediaId) {
-                // Debounce initialization
-                clearTimeout(this.initTimeout);
-                this.initTimeout = setTimeout(() => this.init(), 100);
+        // Fallback: find by title
+        const h2Elements = document.querySelectorAll('h2');
+        for (const h2 of h2Elements) {
+            if (h2.textContent.includes('Following')) {
+                return h2.nextElementSibling;
             }
         }
-    }
-
-    /**
-     * Extract media information from current URL
-     */
-    extractMediaFromUrl() {
-        const patterns = [
-            /\/anime\/(\d+)/,
-            /\/manga\/(\d+)/,
-            /\/(anime|manga)\/.*?\/(\d+)/
-        ];
-
-        for (const pattern of patterns) {
-            const match = window.location.pathname.match(pattern);
-            if (match) {
-                const id = parseInt(match[match.length - 1] || match[1]);
-                if (id > 0) {
-                    return {
-                        id,
-                        type: match[1]?.toUpperCase() || (pattern.source.includes('anime') ? 'ANIME' : 'MANGA')
-                    };
-                }
-            }
-        }
-
         return null;
     }
 
-    /**
-     * Reset extension state
-     */
-    resetState() {
-        // Reset persistence tracking
-        this.isFirstTimeLoad = false;
-        this.usersWithoutCache = 0;
-        this.totalUsers = 0;
-
-        // Remove existing tooltip
-        const tooltip = document.querySelector(SELECTORS.TOOLTIP);
-        if (tooltip) tooltip.remove();
-
-        this.apiManager.reset();
+    extractUsername(link) {
+        const href = link.getAttribute('href');
+        if (!href) return null;
+        return href.replace('/user/', '').replace(/\/$/, '');
     }
 
-    /**
-     * Clean up resources when extension is destroyed
-     */
-    destroy() {
-        if (this.urlObserver) {
-            this.urlObserver.disconnect();
+    extractMediaFromUrl() {
+        const match = window.location.pathname.match(/\/(anime|manga)\/(\d+)/);
+        if (match && match[2]) {
+            return {
+                id: parseInt(match[2]),
+                type: match[1].toUpperCase()
+            };
         }
+        return null;
+    }
 
-        this.cleanup.forEach(cleanupFn => cleanupFn());
-        this.cleanup = [];
-
+    destroy() {
+        if (this.mainLoopInterval) {
+            clearInterval(this.mainLoopInterval);
+        }
         this.cacheManager.destroy();
-        this.apiManager.destroy();
         this.tooltipManager.destroy();
+        Logger.log("Anilist Hover Comments: Destroyed!");
     }
 }
 
@@ -680,16 +341,12 @@ class CacheManager {
         try {
             const cached = localStorage.getItem('anilist_comment_cache');
             if (cached) {
-                const parsedCache = JSON.parse(cached);
-                if (parsedCache && typeof parsedCache === 'object') {
-                    this.cache = parsedCache;
-                }
+                this.cache = JSON.parse(cached) || {};
             }
         } catch (error) {
             Logger.warn('Cache loading failed:', error.message);
             this.cache = {};
         }
-
         this.startPeriodicSave();
     }
 
@@ -717,22 +374,14 @@ class CacheManager {
     }
 
     startPeriodicSave() {
-        if (this.saveInterval) {
-            clearInterval(this.saveInterval);
-        }
-
+        if (this.saveInterval) clearInterval(this.saveInterval);
         this.saveInterval = setInterval(() => {
-            if (Object.keys(this.cache).length > 0) {
-                this.save();
-            }
+            this.save();
         }, CONFIG.CACHE_SAVE_INTERVAL);
     }
 
     destroy() {
-        if (this.saveInterval) {
-            clearInterval(this.saveInterval);
-            this.saveInterval = null;
-        }
+        if (this.saveInterval) clearInterval(this.saveInterval);
         this.save();
     }
 }
@@ -747,12 +396,11 @@ class CachedComment {
     }
 
     isValid() {
-        if (!this.timestamp) return false;
         return (Date.now() - this.timestamp) < CONFIG.CACHE_MAX_AGE;
     }
 
     isNegativeCacheValid() {
-        if (!this.timestamp || this.hasContent()) return false;
+        if (this.hasContent()) return false;
         return (Date.now() - this.timestamp) < CONFIG.NEGATIVE_CACHE_AGE;
     }
 
@@ -765,25 +413,18 @@ class CachedComment {
     }
 
     getFormattedAge() {
-        return this.formatTimeAgo(new Date(this.timestamp));
-    }
-
-    formatTimeAgo(date) {
         const now = new Date();
-        const diffMs = now - date;
+        const diffMs = now - this.timestamp;
         const diffSec = Math.floor(diffMs / 1000);
         const diffMin = Math.floor(diffSec / 60);
         const diffHour = Math.floor(diffMin / 60);
-        const diffDay = Math.floor(diffHour / 24);
 
         if (diffSec < 30) return "just now";
-        if (diffSec < 60) return `${diffSec} seconds ago`;
-        if (diffMin < 60) return `${diffMin} minute${diffMin !== 1 ? 's' : ''} ago`;
-        if (diffHour < 24) return `${diffHour} hour${diffHour !== 1 ? 's' : ''} ago`;
-        if (diffDay < 30) return `${diffDay} day${diffDay !== 1 ? 's' : ''} ago`;
+        if (diffMin < 1) return `${diffSec} sec ago`;
+        if (diffHour < 1) return `${diffMin} min ago`;
+        if (diffHour < 24) return `${diffHour} hours ago`;
 
-        const options = { day: 'numeric', month: 'short', year: 'numeric' };
-        return `on ${date.toLocaleDateString(undefined, options)}`;
+        return new Date(this.timestamp).toLocaleDateString();
     }
 }
 
@@ -791,7 +432,9 @@ class CachedComment {
  * Enhanced API manager with silent error handling
  */
 class ApiManager {
-    constructor() {
+    constructor(cacheManager) {
+        this.cacheManager = cacheManager;
+        this.tooltipManager = null; // Will be set by 'setTooltipManager'
         this.queue = [];
         this.pendingRequests = new Set();
         this.isProcessing = false;
@@ -800,16 +443,13 @@ class ApiManager {
         this.isRateLimited = false;
     }
 
-    isPending(username, mediaId) {
-        return this.pendingRequests.has(`${username}-${mediaId}`);
+    setTooltipManager(tooltipManager) {
+        this.tooltipManager = tooltipManager;
     }
 
     queueRequest(entry, username, mediaId, callback) {
         const requestKey = `${username}-${mediaId}`;
-
-        if (this.pendingRequests.has(requestKey)) {
-            return;
-        }
+        if (this.pendingRequests.has(requestKey)) return;
 
         this.pendingRequests.add(requestKey);
         this.queue.push({ entry, username, mediaId, callback, requestKey });
@@ -824,7 +464,6 @@ class ApiManager {
             this.isProcessing = false;
             return;
         }
-
         this.isProcessing = true;
 
         while (this.queue.length > 0) {
@@ -840,51 +479,71 @@ class ApiManager {
                 await this.delay(CONFIG.BATCH_DELAY);
             }
         }
-
         this.isProcessing = false;
     }
 
     async processRequest(request) {
+        // We destructure only what's needed in the try block.
+        const { username, mediaId, callback } = request;
         try {
-            const { username, mediaId, callback, requestKey } = request;
             const comment = await this.fetchUserComment(username, mediaId);
 
             const cacheKey = `${username}-${mediaId}`;
-            app.cacheManager.set(cacheKey, comment);
+            this.cacheManager.set(cacheKey, comment);
 
             if (callback) {
                 callback(comment && comment.trim() !== '');
             }
-
         } catch (error) {
-            // Silent error handling - cache negative result
             Logger.warn(`API request failed for ${request.username}: ${error.message}`);
-
-            const cacheKey = `${request.username}-${request.mediaId}`;
-            app.cacheManager.set(cacheKey, ''); // Empty string = no comment
-
+            // Set negative cache
+            this.cacheManager.set(`${request.username}-${request.mediaId}`, '');
             if (request.callback) {
                 request.callback(false);
             }
         } finally {
+            // Use request.requestKey directly to fix 'unused variable' warning
             this.pendingRequests.delete(request.requestKey);
+        }
+    }
+
+    /**
+     * Public function for manual refresh from the tooltip
+     */
+    async refreshComment(username, mediaId) {
+        if (!this.checkRateLimit()) {
+            Logger.warn("Rate limit hit, refresh failed.");
+            return 'rate_limited';
+        }
+
+        try {
+            const comment = await this.fetchUserComment(username, mediaId);
+            const cacheKey = `${username}-${mediaId}`;
+            this.cacheManager.set(cacheKey, comment);
+
+            // Update tooltip if it's visible
+            if (this.tooltipManager) {
+                const cachedComment = this.cacheManager.get(cacheKey);
+                this.tooltipManager.updateIfVisible(username, mediaId, cachedComment);
+            }
+            return 'success';
+        } catch (error) {
+            Logger.error("Manual refresh failed:", error.message);
+            return 'error';
         }
     }
 
     checkRateLimit() {
         const now = Date.now();
-
         if (now - this.lastReset > CONFIG.RATE_LIMIT_DURATION) {
             this.requestCount = 0;
             this.lastReset = now;
             this.isRateLimited = false;
         }
-
         if (this.requestCount >= CONFIG.MAX_REQUESTS_PER_MINUTE) {
             this.isRateLimited = true;
             return false;
         }
-
         this.requestCount++;
         return true;
     }
@@ -897,31 +556,18 @@ class ApiManager {
                 }
             }
         `;
-
         const variables = { userName: username, mediaId: parseInt(mediaId) };
-
         const response = await fetch("https://graphql.anilist.co", {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
+            headers: { "Content-Type": "application/json", "Accept": "application/json" },
             body: JSON.stringify({ query, variables })
         });
-
         if (!response.ok) {
-            if (response.status === 429) {
-                this.isRateLimited = true;
-            }
+            if (response.status === 429) this.isRateLimited = true;
             throw new Error(`HTTP ${response.status}`);
         }
-
         const data = await response.json();
-
-        if (data.errors) {
-            throw new Error('GraphQL errors');
-        }
-
+        if (data.errors) throw new Error('GraphQL errors');
         return data.data?.MediaList?.notes || "";
     }
 
@@ -929,43 +575,34 @@ class ApiManager {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    reset() {
+    destroy() {
         this.queue = [];
         this.pendingRequests.clear();
-        this.isProcessing = false;
-        this.requestCount = 0;
-        this.lastReset = Date.now();
-        this.isRateLimited = false;
-    }
-
-    destroy() {
-        this.reset();
     }
 }
 
 /**
- * Tooltip Manager (simplified from original)
+ * Tooltip Manager (Refactored)
  */
 class TooltipManager {
     static #instance = null;
 
-    static getInstance() {
+    static getInstance(apiManager) {
         if (!TooltipManager.#instance) {
-            TooltipManager.#instance = new TooltipManager();
+            TooltipManager.#instance = new TooltipManager(apiManager);
         }
         return TooltipManager.#instance;
     }
 
-    constructor() {
+    constructor(apiManager) {
+        this.apiManager = apiManager;
         this.tooltip = null;
         this.currentElement = null;
+        this.currentUsername = null;
+        this.currentMediaId = null;
         this.state = 'inactive';
         this.timers = new Map();
-        this.mousePosition = { x: 0, y: 0 };
-        this.hoverStates = {
-            icon: false,
-            tooltip: false
-        };
+        this.hoverStates = { icon: false, tooltip: false };
         this.forceVisible = false;
 
         this.setupGlobalListeners();
@@ -973,35 +610,30 @@ class TooltipManager {
     }
 
     setupGlobalListeners() {
-        document.addEventListener('mousemove', this.handleMouseMove.bind(this));
-        document.addEventListener('mouseleave', this.handleDocumentLeave.bind(this));
+        // Use 'pointermove' for better compatibility
+        document.addEventListener('pointermove', (e) => {
+            this.mousePosition = { x: e.clientX, y: e.clientY };
+        });
     }
 
     handleIconEnter(element, username, mediaId) {
-        console.log('[TOOLTIP DEBUG] Icon enter:', username); // Force console output for debugging
+        Logger.log('Icon enter:', username);
         this.hoverStates.icon = true;
         this.forceVisible = false;
         this.clearTimer('hide');
         this.clearTimer('show');
 
-        if (this.tooltip && this.tooltip.style.display === 'block') {
+        this.setTimer('show', () => {
             this.show(element, username, mediaId);
-        } else {
-            this.setTimer('show', () => {
-                this.show(element, username, mediaId);
-            }, CONFIG.TOOLTIP_SHOW_DELAY);
-        }
+        }, CONFIG.TOOLTIP_SHOW_DELAY);
     }
 
     handleIconLeave() {
         Logger.log('Icon leave');
         this.hoverStates.icon = false;
         this.clearTimer('show');
-
         if (!this.hoverStates.tooltip && !this.forceVisible) {
-            this.setTimer('hide', () => {
-                this.hide();
-            }, CONFIG.TOOLTIP_HIDE_DELAY);
+            this.setTimer('hide', () => this.hide(), CONFIG.TOOLTIP_HIDE_DELAY);
         }
     }
 
@@ -1012,15 +644,17 @@ class TooltipManager {
         this.clearTimer('show');
         this.show(element, username, mediaId);
 
-        setTimeout(() => {
+        // Disable force-visible after a delay
+        this.setTimer('force_hide', () => {
             this.forceVisible = false;
         }, 3000);
     }
 
     show(element, username, mediaId) {
-        console.log('[TOOLTIP DEBUG] Showing tooltip for:', username);
         this.clearTimer('hide');
         this.currentElement = element;
+        this.currentUsername = username;
+        this.currentMediaId = mediaId;
         this.state = 'showing';
 
         document.querySelectorAll(SELECTORS.COMMENT_ICON).forEach(icon => {
@@ -1028,74 +662,57 @@ class TooltipManager {
         });
 
         const tooltip = this.getTooltip();
-        console.log('[TOOLTIP DEBUG] Tooltip element:', tooltip);
-
         this.positionTooltip(element);
-
         tooltip.style.opacity = '0';
         tooltip.style.display = 'block';
-        tooltip.innerHTML = "<div class='tooltip-loading'>Loading comment...</div>";
-        console.log('[TOOLTIP DEBUG] Set loading state');
 
         const icon = element.querySelector(SELECTORS.COMMENT_ICON);
-        if (icon) {
-            icon.classList.add('active-comment');
-            console.log('[TOOLTIP DEBUG] Icon highlighted for:', username);
-        }
+        if (icon) icon.classList.add('active-comment');
 
         requestAnimationFrame(() => {
             tooltip.style.opacity = '1';
             this.state = 'visible';
-            console.log('[TOOLTIP DEBUG] Tooltip visible for:', username);
         });
 
         this.loadComment(username, mediaId);
     }
 
-    hide() {
-        console.log('[TOOLTIP DEBUG] Hiding tooltip, states:', this.hoverStates, 'force visible:', this.forceVisible);
-
-        if (this.hoverStates.icon || this.hoverStates.tooltip || this.forceVisible) {
-            console.log('[TOOLTIP DEBUG] Not hiding - still hovering or force visible');
+    hide(force = false) {
+        if ((!force && (this.hoverStates.icon || this.hoverStates.tooltip || this.forceVisible))) {
             return;
         }
 
+        Logger.log('Hiding tooltip');
         if (this.tooltip && this.state !== 'hiding') {
-            console.log('[TOOLTIP DEBUG] Actually hiding tooltip');
             this.state = 'hiding';
             this.tooltip.style.opacity = '0';
 
-            setTimeout(() => {
+            this.setTimer('transition_end', () => {
                 if (this.state === 'hiding' && this.tooltip) {
                     this.tooltip.style.display = 'none';
                     this.currentElement = null;
+                    this.currentUsername = null;
+                    this.currentMediaId = null;
                     this.state = 'inactive';
-
                     document.querySelectorAll(SELECTORS.COMMENT_ICON).forEach(icon => {
                         icon.classList.remove('active-comment');
                     });
-                    console.log('[TOOLTIP DEBUG] Tooltip hidden and cleaned up');
                 }
-            }, 300);
+            }, 300); // 300ms = transition time
         }
     }
 
     getTooltip() {
         if (!this.tooltip) {
-            this.tooltip = document.getElementById('anilist-tooltip');
-
-            if (!this.tooltip) {
-                this.tooltip = document.createElement('div');
-                this.tooltip.id = 'anilist-tooltip';
-                this.tooltip.className = 'theme-dark';
-                this.tooltip.style.display = 'none';
-                this.tooltip.style.opacity = '0';
-                document.body.appendChild(this.tooltip);
-
-                this.setupTooltipEvents();
-            }
+            this.tooltip = document.createElement('div');
+            this.tooltip.id = 'anilist-tooltip';
+            this.tooltip.className = 'theme-dark'; // Default
+            this.tooltip.style.display = 'none';
+            this.tooltip.style.opacity = '0';
+            document.body.appendChild(this.tooltip);
+            this.setupTooltipEvents();
         }
-
+        // TODO: Detect light/dark theme from body
         return this.tooltip;
     }
 
@@ -1105,7 +722,6 @@ class TooltipManager {
             this.hoverStates.tooltip = true;
             this.clearTimer('hide');
         });
-
         this.tooltip.addEventListener('mouseleave', () => {
             Logger.log('Tooltip leave');
             this.hoverStates.tooltip = false;
@@ -1117,135 +733,171 @@ class TooltipManager {
 
     positionTooltip(element) {
         const tooltip = this.getTooltip();
-        const followingSection = document.querySelector(SELECTORS.FOLLOWING_SECTION);
 
-        if (!followingSection) return;
+        // 1. Find elements: icon, parent row, and the entire section
+        const iconRect = element.getBoundingClientRect();
+        const parentRow = element.closest('a'); // The entire user row
+        const parentRowRect = parentRow ? parentRow.getBoundingClientRect() : iconRect; // Use row, or fallback to icon
+        const followingSection = element.closest(SELECTORS.FOLLOWING_SECTION);
 
-        const followingRect = followingSection.getBoundingClientRect();
-        const parentEntry = element.closest('a');
+        // Default values
+        const gap = 15; // Gap from edge
+        const tooltipWidth = tooltip.offsetWidth || 265; // 265px from CSS
 
-        if (!parentEntry) return;
+        let posX = 0;
+        let posY = 0;
 
-        const parentRect = parentEntry.getBoundingClientRect();
+        // 2. Calculate position
+        if (followingSection) {
+            // Y-Position = Aligned with the USER ROW (not the icon)
+            posY = parentRowRect.top + window.scrollY;
 
-        const posX = followingRect.right + 20 + window.scrollX;
-        const posY = window.scrollY + parentRect.top;
-
-        tooltip.style.left = posX + 'px';
-        tooltip.style.top = posY + 'px';
-    }
-
-    async loadComment(username, mediaId) {
-        console.log('[TOOLTIP DEBUG] Loading comment for:', username);
-        const cacheKey = `${username}-${mediaId}`;
-        let cachedComment = app.cacheManager.get(cacheKey);
-
-        console.log('[TOOLTIP DEBUG] Cache lookup result:', cachedComment ? 'FOUND' : 'NOT FOUND');
-
-        // Show cached content first if available
-        if (cachedComment) {
-            console.log('[TOOLTIP DEBUG] Has cached content:', cachedComment.hasContent());
-            console.log('[TOOLTIP DEBUG] Cache content preview:', cachedComment.content ? cachedComment.content.substring(0, 50) : 'EMPTY');
-            this.updateTooltipContent(cachedComment.content, username, mediaId, cachedComment);
+            // X-Position = To the right of the ENTIRE "Following" section
+            const followingRect = followingSection.getBoundingClientRect();
+            posX = followingRect.right + gap + window.scrollX;
         } else {
-            console.log('[TOOLTIP DEBUG] No cache found, showing empty state');
-            this.updateTooltipContent('', username, mediaId, null);
+            // Fallback (if section not found, anchor to icon)
+            posX = iconRect.right + gap + window.scrollX;
+            posY = parentRowRect.top + window.scrollY; // Always use row height
+            Logger.warn("Following section not found, using fallback positioning.");
         }
 
-        // Fetch fresh content if cache is invalid and not rate limited
-        if (!cachedComment?.isValid() && !app.apiManager.isRateLimited) {
-            try {
-                if (app.apiManager.checkRateLimit()) {
-                    console.log('[TOOLTIP DEBUG] Making fresh API request for:', username);
-                    const comment = await app.apiManager.fetchUserComment(username, mediaId);
-                    app.cacheManager.set(cacheKey, comment);
-                    console.log('[TOOLTIP DEBUG] Fresh API result:', comment ? comment.substring(0, 50) : 'EMPTY');
-                    this.updateTooltipContent(comment, username, mediaId, app.cacheManager.get(cacheKey));
+        // 3. Apply position (necessary for measurement)
+        tooltip.style.left = `${posX}px`;
+        tooltip.style.top = `${posY}px`;
+
+        // 4. Collision check (post-render)
+        requestAnimationFrame(() => {
+            const tooltipRect = tooltip.getBoundingClientRect();
+            const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+            const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+
+            // Has it gone off-screen to the RIGHT? (e.g., Sidebar Layout)
+            if (tooltipRect.right > (viewportWidth - gap)) {
+                // Fallback: move it to the LEFT
+                if (followingSection) {
+                    const followingRect = followingSection.getBoundingClientRect();
+                    posX = followingRect.left - tooltipWidth - gap + window.scrollX;
                 } else {
-                    console.log('[TOOLTIP DEBUG] Rate limited, cannot fetch fresh content');
+                    // Fallback to parent row's left
+                    posX = parentRowRect.left - tooltipWidth - gap + window.scrollX;
                 }
-            } catch (error) {
-                console.error('[TOOLTIP DEBUG] Error loading comment:', error.message);
-                this.showError('Error loading comment');
+                tooltip.style.left = `${posX}px`;
             }
+
+            // Has it gone off-screen at the BOTTOM?
+            if (tooltipRect.bottom > (viewportHeight - gap)) {
+                // Move it up (aligned to the bottom of the ROW)
+                posY = parentRowRect.bottom - tooltipRect.height + window.scrollY;
+                tooltip.style.top = `${posY}px`;
+            }
+
+            // Has it gone off-screen at the TOP?
+            if (tooltipRect.top < (gap + window.scrollY)) {
+                // Move it down (aligned to the top of the ROW)
+                posY = parentRowRect.top + window.scrollY;
+                tooltip.style.top = `${posY}px`;
+            }
+        });
+    }
+
+    loadComment(username, mediaId) {
+        const cachedComment = app.cacheManager.get(`${username}-${mediaId}`);
+        this.updateTooltipContent(username, mediaId, cachedComment);
+
+        // Fetch if cache is expired (will be handled by updateIfVisible)
+        if (!cachedComment?.isValid() && !this.apiManager.isRateLimited) {
+            this.apiManager.refreshComment(username, mediaId);
         }
     }
 
-    updateTooltipContent(comment, username, mediaId, cachedComment) {
-        console.log('[TOOLTIP DEBUG] Updating tooltip content for:', username);
-        console.log('[TOOLTIP DEBUG] Comment to display:', comment ? comment.substring(0, 100) : 'NO COMMENT');
-
-        if (!this.tooltip) {
-            console.error('[TOOLTIP DEBUG] No tooltip element found!');
-            return;
+    /**
+     * Updates the tooltip content if it's visible and matches the user
+     */
+    updateIfVisible(username, mediaId, cachedComment) {
+        if (
+            this.state === 'visible' &&
+            this.currentUsername === username &&
+            this.currentMediaId === mediaId
+        ) {
+            Logger.log(`Tooltip refresh for ${username}`);
+            this.updateTooltipContent(username, mediaId, cachedComment);
         }
+    }
 
-        const content = this.createTooltipContent(comment, username, mediaId, cachedComment);
-        console.log('[TOOLTIP DEBUG] Generated HTML length:', content.length);
-        console.log('[TOOLTIP DEBUG] Generated HTML preview:', content.substring(0, 200));
+    /**
+     * Builds the tooltip DOM
+     */
+    updateTooltipContent(username, mediaId, cachedComment) {
+        const tooltip = this.getTooltip();
+        tooltip.innerHTML = ''; // Clear
 
-        this.tooltip.innerHTML = content;
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'tooltip-content';
 
-        // Verify the update
-        const actualContent = this.tooltip.innerHTML;
-        console.log('[TOOLTIP DEBUG] Actual tooltip HTML after update:', actualContent.substring(0, 200));
+        const commentText = document.createElement('div');
+        const hasComment = cachedComment && cachedComment.hasContent();
+        commentText.className = hasComment ? 'comment' : 'no-comment';
+        commentText.textContent = hasComment ? cachedComment.content : 'No comment';
+        contentDiv.appendChild(commentText);
 
-        if (actualContent.includes('Loading comment')) {
-            console.warn('[TOOLTIP DEBUG] Tooltip still shows loading state after update!');
+        const footerDiv = document.createElement('div');
+        footerDiv.className = 'tooltip-footer';
+
+        const infoSpan = document.createElement('span');
+        infoSpan.className = 'tooltip-info';
+        if (cachedComment) {
+            const age = cachedComment.getAge();
+            if (age > CONFIG.CACHE_MAX_AGE * 0.75) {
+                infoSpan.classList.add('cache-warning');
+            }
+            infoSpan.textContent = `Cached: ${cachedComment.getFormattedAge()}`;
         } else {
-            console.log('[TOOLTIP DEBUG] Tooltip content updated successfully');
+            infoSpan.textContent = 'Loading...';
         }
-    }
 
-    createTooltipContent(comment, username, mediaId, cachedComment) {
-        const hasComment = comment && comment.trim();
+        const refreshBtn = document.createElement('button');
+        refreshBtn.className = 'tooltip-refresh-btn';
+        refreshBtn.innerHTML = `${ICON_REFRESH_SVG} Refresh`;
 
-        return `<div class="tooltip-content"><div class="${hasComment ? 'comment' : 'no-comment'}">${hasComment ? this.escapeHtml(comment) : 'No comment'}</div></div><div class="tooltip-footer"><span class="tooltip-info">${cachedComment ? this.getFormattedCacheInfo(cachedComment) : `Cached`}</span><button class="tooltip-refresh-btn" onclick="window.anilistExtension.refreshComment('${username}', ${mediaId})"><i class="fa-solid fa-sync"></i> Refresh</button></div>`;
-    }
+        refreshBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            refreshBtn.disabled = true;
+            refreshBtn.innerHTML = `${ICON_LOADING_SVG} Refreshing...`;
 
-    getFormattedCacheInfo(cachedComment) {
-        const age = cachedComment.getAge();
-        const isOld = age > (CONFIG.CACHE_MAX_AGE * 0.75);
-        const icon = isOld ? '<i class="fa-solid fa-clock"></i> ' : '';
-        const style = isOld ? 'color: #ffcc00;' : '';
+            const status = await this.apiManager.refreshComment(username, mediaId);
 
-        return `<span style="${style}">${icon}Cached ${cachedComment.getFormattedAge()}</span>`;
-    }
+            // 'updateIfVisible' will be called by 'refreshComment'
+            // We just need to manage the button state
+            if (status === 'success') {
+                refreshBtn.classList.add('success');
+                refreshBtn.innerHTML = 'Done!';
+            } else if (status === 'rate_limited') {
+                refreshBtn.classList.add('warning');
+                refreshBtn.innerHTML = 'Rate Limit';
+            } else {
+                refreshBtn.classList.add('error');
+                refreshBtn.innerHTML = 'Error';
+            }
 
-    showError(message) {
-        if (this.tooltip) {
-            this.tooltip.innerHTML += `<div class="tooltip-error">${message}</div>`;
-        }
-    }
+            // Reset button
+            setTimeout(() => {
+                refreshBtn.disabled = false;
+                refreshBtn.classList.remove('success', 'warning', 'error');
+                refreshBtn.innerHTML = `${ICON_REFRESH_SVG} Refresh`;
+            }, 1500);
+        });
 
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    handleMouseMove(e) {
-        this.mousePosition = { x: e.clientX, y: e.clientY };
-    }
-
-    handleDocumentLeave() {
-        Logger.log('Document leave');
-        this.hoverStates.icon = false;
-        this.hoverStates.tooltip = false;
-        this.forceVisible = false;
-        this.hide();
+        footerDiv.appendChild(infoSpan);
+        footerDiv.appendChild(refreshBtn);
+        tooltip.appendChild(contentDiv);
+        tooltip.appendChild(footerDiv);
     }
 
     startAutoHideChecker() {
-        this.autoHideInterval = setInterval(() => {
-            this.checkAutoHide();
-        }, CONFIG.AUTO_HIDE_CHECK_INTERVAL);
-    }
+        setInterval(() => {
+            if (this.state !== 'visible' || !this.currentElement || !this.mousePosition) return;
 
-    checkAutoHide() {
-        if (!this.tooltip || this.state !== 'visible') return;
-
-        if (this.currentElement) {
             const tooltipRect = this.tooltip.getBoundingClientRect();
             const iconRect = this.currentElement.getBoundingClientRect();
 
@@ -1255,27 +907,16 @@ class TooltipManager {
             if (!this.forceVisible) {
                 this.hoverStates.tooltip = isInTooltip;
                 this.hoverStates.icon = isInIcon;
-
                 if (!isInTooltip && !isInIcon) {
                     this.hide();
                 }
             }
-
-            const icon = this.currentElement.querySelector(SELECTORS.COMMENT_ICON);
-            if (icon && this.state === 'visible') {
-                if (!icon.classList.contains('active-comment')) {
-                    Logger.log('Re-adding active-comment class due to sync issue');
-                    icon.classList.add('active-comment');
-                }
-            }
-        }
+        }, CONFIG.AUTO_HIDE_CHECK_INTERVAL);
     }
 
     isPointInRect(point, rect) {
-        return point.x >= rect.left &&
-            point.x <= rect.right &&
-            point.y >= rect.top &&
-            point.y <= rect.bottom;
+        return point.x >= rect.left && point.x <= rect.right &&
+            point.y >= rect.top && point.y <= rect.bottom;
     }
 
     setTimer(name, callback, delay) {
@@ -1284,9 +925,8 @@ class TooltipManager {
     }
 
     clearTimer(name) {
-        const timer = this.timers.get(name);
-        if (timer) {
-            clearTimeout(timer);
+        if (this.timers.has(name)) {
+            clearTimeout(this.timers.get(name));
             this.timers.delete(name);
         }
     }
@@ -1294,15 +934,7 @@ class TooltipManager {
     destroy() {
         this.timers.forEach(timer => clearTimeout(timer));
         this.timers.clear();
-
-        if (this.autoHideInterval) {
-            clearInterval(this.autoHideInterval);
-        }
-
-        if (this.tooltip) {
-            this.tooltip.remove();
-            this.tooltip = null;
-        }
+        if (this.tooltip) this.tooltip.remove();
     }
 }
 
@@ -1311,69 +943,26 @@ class TooltipManager {
  */
 let app = null;
 
-/**
- * Initialize the application
- */
 function initializeApp() {
-    if (!app) {
-        app = new AnilistHoverComments();
+    if (app) return; // Already initialized
 
-        // Expose refresh function globally for tooltip button
-        window.anilistExtension = {
-            refreshComment: async (username, mediaId) => {
-                const cacheKey = `${username}-${mediaId}`;
-                try {
-                    const comment = await app.apiManager.fetchUserComment(username, mediaId);
-                    app.cacheManager.set(cacheKey, comment);
-
-                    const tooltipManager = TooltipManager.getInstance();
-                    if (tooltipManager.currentElement) {
-                        const cachedComment = app.cacheManager.get(cacheKey);
-                        tooltipManager.updateTooltipContent(comment, username, mediaId, cachedComment);
-                    }
-                } catch (error) {
-                    Logger.warn('Comment refresh failed:', error.message);
-                }
-            },
-
-            enableDebug: () => {
-                CONFIG.DEBUG_MODE = true;
-                console.log('[AnilistExt] Debug mode enabled. Reload page for full debug output.');
-            },
-
-            showLogs: () => {
-                Logger.showLogs();
-            }
-        };
-    }
-
+    app = new AnilistHoverComments();
     app.init();
+
+    // Expose app instance for debugging in console
+    window.anilistExtension = {
+        app: app
+    };
 }
 
-/**
- * Event listeners for initialization
- */
-document.addEventListener('DOMContentLoaded', () => {
-    Logger.log('DOMContentLoaded - initializing extension');
-    setTimeout(initializeApp, 50);
-});
-
-window.addEventListener('load', () => {
-    Logger.log('Window load event - checking if needs initialization');
-    setTimeout(initializeApp, 100);
-});
+// Initialize as soon as possible
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+    initializeApp();
+}
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', () => {
-    if (app) {
-        app.destroy();
-    }
+    if (app) app.destroy();
 });
-
-// Initialize immediately and aggressively for fast loading pages
-Logger.log('Starting immediate initialization');
-setTimeout(initializeApp, 10);
-
-// Additional early initialization attempts
-setTimeout(initializeApp, 100);
-setTimeout(initializeApp, 500);

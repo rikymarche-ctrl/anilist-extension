@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Anilist Hover Comments",
-  "version": "1.2.0",
+  "version": "2.1.0",
   "description": "View user comments by hovering over icon in Anilist anime & manga pages",
   "author": "ExAstra",
   "homepage_url": "https://github.com/rikymarche-ctrl/anilist-extension",
@@ -12,7 +12,10 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://anilist.co/anime/*", "https://anilist.co/manga/*"],
+      "matches": [
+        "https://anilist.co/anime/*",
+        "https://anilist.co/manga/*"
+      ],
       "js": ["content.js"],
       "css": ["styles.css"],
       "run_at": "document_idle"
