@@ -1,6 +1,7 @@
 /**
- * Anilist Hover Comments - Enhanced CSS Styles
- * * This stylesheet provides enhanced styles for the comment tooltip system
+ * Anilist Hover Comments - CSS Styles
+ *
+ * This stylesheet provides enhanced styles for the comment tooltip system
  * with improved visual feedback for refresh and cache states.
  *
  * @author ExAstra
@@ -414,4 +415,37 @@ div.following a {
   background-color: rgba(255, 50, 50, 0.05);
   border: 1px solid rgba(255, 50, 50, 0.2);
   color: #e63939;
+}
+
+/*------------------------------------------------------
+ * CUSTOM SCROLLBAR STYLING (WebKit)
+ *------------------------------------------------------*/
+
+/* Targets the scrollbar on the tooltip element */
+#anilist-tooltip::-webkit-scrollbar {
+  width: 6px; /* Scrollbar width */
+  height: 6px;
+}
+
+/* The scrollbar track (the background area) */
+#anilist-tooltip::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1); /* Use a subtle, dark background */
+  border-radius: 3px;
+}
+
+/* The scrollbar thumb (the draggable handle) */
+#anilist-tooltip::-webkit-scrollbar-thumb {
+  background-color: #3db4f2; /* Use the theme's accent blue */
+  border-radius: 3px; /* Rounded corners for the thumb */
+  transition: background-color 0.2s ease;
+}
+
+/* Thumb hover state */
+#anilist-tooltip::-webkit-scrollbar-thumb:hover {
+  background-color: #5bc2ff; /* Brighter accent blue on hover */
+}
+
+/* Hide the scrollbar arrows (buttons) */
+#anilist-tooltip::-webkit-scrollbar-button {
+  display: none;
 }
