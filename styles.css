@@ -1,3 +1,5 @@
+@import url("https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css");
+
 /**
  * Anilist Hover Comments - CSS Styles
  *
@@ -49,6 +51,12 @@
 /* Animate pulsing effect for notifications */
 .animate-pulse {
   animation: pulse 2s infinite ease-in-out;
+}
+
+/* NEW: Keyframe for spinning loading icons */
+@keyframes fa-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 /*------------------------------------------------------
@@ -234,6 +242,11 @@
   animation: warningPulse 1.5s 1 ease-in-out;
 }
 
+/* NEW: Apply spinning animation to loading icons */
+.tooltip-refresh-btn svg.fa-spin {
+  animation: fa-spin 1s infinite linear;
+}
+
 /*------------------------------------------------------
  * COMMENT ICON
  *------------------------------------------------------*/
@@ -295,6 +308,35 @@
 .comment-icon-column:hover {
   background-color: rgba(61, 180, 242, 0.1);
 }
+
+/*------------------------------------------------------
+ * REFRESH ALL BUTTON (NEW)
+ *------------------------------------------------------*/
+.anilist-refresh-all-btn {
+  color: #8f98a6; /* Same as icon */
+  opacity: 0.8;
+  transition: color 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
+  display: inline-block;
+  vertical-align: middle;
+  /* MODIFICA: Assicura che l'icona FA abbia la stessa dimensione di quella SVG */
+  font-size: 14px;
+}
+
+.anilist-refresh-all-btn:hover {
+  color: #3db4f2; /* Accent color */
+  opacity: 1;
+  /* RIMOSSO: transform: scale(1.2); */
+}
+
+.anilist-refresh-all-btn:active {
+  transform: scale(0.95);
+}
+
+/* Spinning animation for loading state */
+.anilist-refresh-all-btn i.fa-spin {
+  animation: fa-spin 1s infinite linear;
+}
+
 
 /*------------------------------------------------------
  * FOLLOWING SECTION

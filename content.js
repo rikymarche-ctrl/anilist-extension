@@ -2,7 +2,7 @@
  * Anilist Hover Comments
  *
  * This script enhances Anilist anime/manga pages by displaying user comments via
- * a hover interface. Rewritten for simplicity and reliability.
+ * a hover interface
  *
  * Features:
  * - Shows a comment icon next to user entries with comments
@@ -38,8 +38,6 @@ const CONFIG = {
  * Inline SVG Icons
  */
 const ICON_COMMENT_SVG = `<svg class="svg-inline--fa" style="width: 1em; height: 1em; vertical-align: -0.125em;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M512 240c0 114.9-114.6 208-256 208c-37.1 0-72.3-6.4-104.1-17.9c-11.9 8.7-31.3 20.6-54.3 30.6C73.6 471.1 44.7 480 16 480c-6.5 0-12.3-3.9-14.8-9.9c-2.5-6-1.1-12.8 3.4-17.4l4.1-4.1c10.1-10.1 16.6-23.3 18.2-38.1C11.2 367.1 0 306.7 0 240C0 125.1 114.6 32 256 32s256 93.1 256 208z"/></svg>`;
-const ICON_REFRESH_SVG = `<svg class="svg-inline--fa" style="width: 0.8em; height: 0.8em; vertical-align: -0.05em; margin-right: 5px;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M463.5 224H472c13.3 0 24-10.7 24-24V72c0-9.7-5.8-18.5-14.8-22.2s-19.3-1.7-26.2 5.2L413.4 96.6c-87.6-86.5-228.7-86.2-315.8 1c-87.5 87.5-87.5 229.3 0 316.8s229.3 87.5 316.8 0c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0c-62.5 62.5-163.8 62.5-226.3 0s-62.5-163.8 0-226.3c62.2-62.2 162.7-62.5 225.3-1L327 160c-7 7-7.8 17.8-1.8 25.8s18.1 12 25.8 1.8l90.5-90.5c5.2-5.2 7-12.5 5.2-19.3S471.7 64 464 64H344c-13.3 0-24 10.7-24 24s10.7 24 24 24h60.5c-58.5 57.4-152.8 57.4-211.3 0s-57.4-152.8 0-211.3s152.8-57.4 211.3 0L463.5 224z"/></svg>`;
-const ICON_LOADING_SVG = `<svg class="svg-inline--fa fa-spin" style="width: 0.8em; height: 0.8em; vertical-align: -0.05em; margin-right: 5px;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M304 48a48 48 0 1 0 -96 0 48 48 0 1 0 96 0zm0 416a48 48 0 1 0 -96 0 48 48 0 1 0 96 0zM48 304a48 48 0 1 0 0-96 48 48 0 1 0 0 96zm416 0a48 48 0 1 0 0-96 48 48 0 1 0 0 96zM142.9 437A48 48 0 1 0 75 369.1 48 48 0 1 0 142.9 437zm0-294.2A48 48 0 1 0 75 75a48 48 0 1 0 67.9 67.9zM369.1 437A48 48 0 1 0 437 369.1 48 48 0 1 0 369.1 437z"/></svg>`;
 
 /**
  * CSS selectors used throughout the application
@@ -50,7 +48,8 @@ const SELECTORS = {
     SCORE: 'div[class*="score-"]',
     COMMENT_ICON: '.anilist-comment-icon',
     COMMENT_ICON_COLUMN: '.comment-icon-column',
-    TOOLTIP: '#anilist-tooltip'
+    TOOLTIP: '#anilist-tooltip',
+    REFRESH_ALL_BTN: '.anilist-refresh-all-btn'
 };
 
 /**
@@ -83,6 +82,7 @@ class AnilistHoverComments {
         this.lastMediaId = null;
         this.mainLoopInterval = null;
         this.processedLinks = new Set(); // Tracks already processed links
+        // RIMOSSO: this.refreshAllButtonInjected = false;
 
         this.cacheManager = new CacheManager();
         this.apiManager = new ApiManager(this.cacheManager);
@@ -145,7 +145,90 @@ class AnilistHoverComments {
 
         // 4. Process user links
         this.processUserLinks(media.id);
+
+        // 5. Inject Refresh All button if needed
+        if (this.lastMediaId) {
+            this.injectRefreshAllButton();
+        }
     }
+
+    /**
+     * Injects the "Refresh All" button next to the "Following" H2
+     */
+    injectRefreshAllButton() {
+        const followingSection = this.findFollowingSection();
+        if (!followingSection) return; // Section not ready
+
+        const followingH2 = followingSection.previousElementSibling;
+
+        if (followingH2 && followingH2.tagName === 'H2' && !followingH2.querySelector(SELECTORS.REFRESH_ALL_BTN)) {
+            Logger.log("Injecting Refresh All button");
+
+            followingH2.style.position = 'relative';
+
+            const refreshButton = document.createElement('span');
+            refreshButton.className = 'anilist-refresh-all-btn comment-icon-column';
+            refreshButton.innerHTML = '<i class="fas fa-sync-alt"></i>';
+            refreshButton.title = 'Refresh all comments for this media';
+
+            refreshButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                this.handleRefreshAll();
+            });
+
+            followingH2.appendChild(refreshButton);
+        }
+    }
+
+    /**
+     * Handles the click event for "Refresh All"
+     */
+    handleRefreshAll() {
+        Logger.log("Handling Refresh All");
+        const media = this.extractMediaFromUrl();
+        if (!media) return;
+
+        const followingSection = this.findFollowingSection();
+        if (!followingSection) return;
+
+        const userLinks = followingSection.querySelectorAll(SELECTORS.USER_LINKS);
+        if (!userLinks.length) return;
+
+        // 1. Clear processed state
+        this.processedLinks.clear();
+
+        // 2. Delete cache for all visible users
+        for (const link of userLinks) {
+            const username = this.extractUsername(link);
+            if (username) {
+                const cacheKey = `${username}-${media.id}`;
+                this.cacheManager.delete(cacheKey);
+
+                // 3. Remove existing icons immediately for visual feedback
+                const icon = link.querySelector(SELECTORS.COMMENT_ICON_COLUMN);
+                if (icon) {
+                    icon.remove();
+                }
+            }
+        }
+
+        // 4. Provide visual feedback on the button
+        const btn = document.querySelector(SELECTORS.REFRESH_ALL_BTN);
+        if (btn) {
+            // MODIFICA: Usa l'icona 'spinner' di Font Awesome
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            setTimeout(() => {
+                // MODIFICA: Reimposta l'icona 'sync-alt'
+                btn.innerHTML = '<i class="fas fa-sync-alt"></i>';
+            }, 2000);
+        }
+
+        // 5. The mainLoop will automatically pick up the changes
+        // on its next 250ms tick, find no cache, and re-queue everything.
+        Logger.log(`Cleared cache for ${userLinks.length} users. Main loop will re-fetch.`);
+    }
+
 
     /**
      * Process all user links in the following section
@@ -188,23 +271,40 @@ class AnilistHoverComments {
         const cacheKey = `${username}-${mediaId}`;
         const cachedComment = this.cacheManager.get(cacheKey);
 
-        // If cache has content, show icon
+        const shouldFetch = (cache) => {
+            if (!cache) {
+                return true; // No cache, must fetch
+            }
+            if (cache.hasContent() && !cache.isValid()) {
+                return true; // Positive cache is expired, must fetch
+            }
+
+            return !cache.hasContent() && !cache.isNegativeCacheValid();
+        };
+
         if (cachedComment && cachedComment.hasContent()) {
+            // Case 1: Valid (or expired) POSITIVE cache.
+            // Show the icon immediately. The tooltip's
+            // `loadComment` function will handle refreshing if it's expired.
             this.addIcon(entry, username, mediaId);
             this.processedLinks.add(cacheKey);
         }
-        // If cache is expired or non-existent, queue API request
-        else if (!cachedComment || (!cachedComment.isValid() && !cachedComment.isNegativeCacheValid())) {
+        else if (shouldFetch(cachedComment)) {
+            // Case 2: No cache OR Expired negative cache OR Expired positive cache.
+            // Fetch from API.
             this.apiManager.queueRequest(entry, username, mediaId, (hasContent) => {
                 if (hasContent && !entry.querySelector(SELECTORS.COMMENT_ICON_COLUMN)) {
                     this.addIcon(entry, username, mediaId);
                     this.processedLinks.add(cacheKey);
+                } else if (!hasContent) {
+                    // This ensures we mark it as processed even if the new fetch is empty
+                    this.processedLinks.add(cacheKey);
                 }
             });
         }
-        // If cache is negative AND valid, do nothing
-        else if (cachedComment && !cachedComment.hasContent() && cachedComment.isNegativeCacheValid()) {
-            // It's a negative cache, don't show icon.
+        else {
+            // Case 3: Valid NEGATIVE cache.
+            // Do nothing.
             this.processedLinks.add(cacheKey);
         }
     }
@@ -363,6 +463,16 @@ class CacheManager {
         };
     }
 
+    /**
+     * NEW: Method to delete a specific cache entry
+     */
+    delete(key) {
+        if (this.cache[key]) {
+            delete this.cache[key];
+            Logger.log(`Cache entry deleted: ${key}`);
+        }
+    }
+
     save() {
         try {
             localStorage.setItem('anilist_comment_cache', JSON.stringify(this.cache));
@@ -473,7 +583,10 @@ class ApiManager {
             }
 
             const request = this.queue.shift();
-            await this.processRequest(request);
+            // Add check if request is null (can happen in race conditions)
+            if (request) {
+                await this.processRequest(request);
+            }
 
             if (this.queue.length > 0) {
                 await this.delay(CONFIG.BATCH_DELAY);
@@ -858,12 +971,12 @@ class TooltipManager {
 
         const refreshBtn = document.createElement('button');
         refreshBtn.className = 'tooltip-refresh-btn';
-        refreshBtn.innerHTML = `${ICON_REFRESH_SVG} Refresh`;
+        refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh';
 
         refreshBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
             refreshBtn.disabled = true;
-            refreshBtn.innerHTML = `${ICON_LOADING_SVG} Refreshing...`;
+            refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
 
             const status = await this.apiManager.refreshComment(username, mediaId);
 
@@ -884,7 +997,8 @@ class TooltipManager {
             setTimeout(() => {
                 refreshBtn.disabled = false;
                 refreshBtn.classList.remove('success', 'warning', 'error');
-                refreshBtn.innerHTML = `${ICON_REFRESH_SVG} Refresh`;
+                // MODIFICA: Usa Font Awesome invece di ICON_REFRESH_SVG
+                refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh';
             }, 1500);
         });
 
